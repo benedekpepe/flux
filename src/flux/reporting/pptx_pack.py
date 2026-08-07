@@ -79,6 +79,25 @@ def _pct(p) -> str:
     return f"{p * 100:+.1f}%"
 
 
+def _no_invert(series, idx: int) -> None:
+    """Stop PowerPoint hollowing out a negative bar.
+
+    A `c:dPt` carries its own `invertIfNegative`, and the schema default is true
+    when the element is absent, so setting the flag on the series is not enough:
+    the per-point default wins it back. python-pptx exposes no setter, and
+    `Point._element` is the series rather than the point, so the data-point
+    element is fetched explicitly and the flag inserted where CT_DPt requires
+    it - straight after `c:idx`, before `c:spPr`.
+    """
+    from pptx.oxml.ns import qn
+
+    dpt = series._element.get_or_add_dPt_for_point(idx)
+    if dpt.find(qn("c:invertIfNegative")) is not None:
+        return
+    flag = dpt.makeelement(qn("c:invertIfNegative"), {"val": "0"})
+    dpt.find(qn("c:idx")).addnext(flag)
+
+
 def _blank(prs: Presentation):
     """A slide with nothing on it: every element here is placed explicitly."""
     return prs.slides.add_slide(prs.slide_layouts[6])
@@ -376,12 +395,20 @@ def _drivers(prs, gl, materiality, period, budgeted):
     labels.font.bold = True
     labels.position = XL_LABEL_POSITION.INSIDE_END
 
+    # PowerPoint's default for a bar series is to invert the fill on negative
+    # values, and OOXML treats the flag as true when it is absent. LibreOffice
+    # ignores it, so the shortfall bars looked correct in preview and rendered
+    # hollow - with their white labels invisible - in PowerPoint itself.
+    series = chart.series[0]
+    series.invert_if_negative = False
+
     # One colour per bar: a cost overrun and a revenue shortfall are both bad
     # news but have opposite signs, so sign alone cannot carry the meaning.
     for idx, fu in enumerate(plot["fav_unfav"]):
-        point = chart.series[0].points[idx]
+        point = series.points[idx]
         point.format.fill.solid()
         point.format.fill.fore_color.rgb = GREEN if fu == "F" else RED
+        _no_invert(series, idx)
 
     for axis in (chart.category_axis, chart.value_axis):
         axis.tick_labels.font.size = Pt(11)
@@ -452,9 +479,21 @@ def _spend(prs, detail, period, materiality):
     chart.legend.font.size = Pt(11)
     chart.legend.font.name = FONT
     chart.plots[0].gap_width = 60
+    # A management reader wants the figure, not a bar length to eyeball against
+    # a gridline. Both series are labelled: the comparison is the whole point.
+    chart.plots[0].has_data_labels = True
+    dl = chart.plots[0].data_labels
+    dl.number_format = '#,##0'
+    dl.number_format_is_linked = False
+    dl.font.size = Pt(9)
+    dl.font.name = FONT
+    dl.font.bold = True
+    dl.font.color.rgb = WHITE
+    dl.position = XL_LABEL_POSITION.INSIDE_END
     for series, colour in zip(chart.series, (SLATE, BRASS)):
         series.format.fill.solid()
         series.format.fill.fore_color.rgb = colour
+        series.invert_if_negative = False
     for axis in (chart.category_axis, chart.value_axis):
         axis.tick_labels.font.size = Pt(11)
         axis.tick_labels.font.name = FONT
