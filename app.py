@@ -28,10 +28,23 @@ from flux.reporting import build_client_pack, build_demo_pack
 from flux.synthetic_data import generate_month
 
 
-st.set_page_config(page_title="Flux · FP&A Reporting", layout="wide")
+ASSETS = Path(__file__).resolve().parent / "assets"
 
-# The wordmark uses the theme's primary colour rather than a hardcoded navy, so
-# it stays legible when the app renders in dark mode. See .streamlit/config.toml.
+st.set_page_config(
+    page_title="Flux · FP&A Reporting",
+    page_icon=str(ASSETS / "flux-mark.svg"),
+    layout="wide",
+)
+
+# The lockup sits in the app chrome; the mark alone is used where space is tight
+# (collapsed sidebar, browser tab). Both are drawn in tones that hold up on a
+# white and on a navy ground, because Streamlit reports the active theme but
+# documents it as unreliable on first load.
+st.logo(str(ASSETS / "flux-logo.svg"), icon_image=str(ASSETS / "flux-mark.svg"),
+        size="large")
+
+# The page heading uses the theme's primary colour rather than a hardcoded navy,
+# so it stays legible in dark mode. See .streamlit/config.toml.
 st.title(":primary[Flux]")
 st.caption("Automated management reporting — turn a general ledger into a variance pack.")
 

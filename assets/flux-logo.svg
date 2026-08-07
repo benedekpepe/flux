@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 166 48" width="166" height="48" role="img" aria-label="Flux">
+  <title>Flux</title>
+  <!-- Horizontal lockup: the variance mark beside the wordmark.
+       The letterforms are drawn as geometry rather than set as <text>, so the
+       logo renders identically everywhere instead of falling back to whatever
+       font the viewer happens to have. -->
+  <g>
+    <rect x="7"  y="12" width="15" height="30" rx="2.5" fill="#8AA0CC"/>
+    <rect x="26" y="24" width="15" height="18" rx="2.5" fill="#C6A15B"/>
+    <rect x="26" y="12" width="15" height="4"  rx="2"   fill="#C6A15B"/>
+  </g>
+  <g fill="#C6A15B" transform="translate(59 8)">
+    <rect x="0"  y="0"  width="7"  height="32"/>
+    <rect x="0"  y="0"  width="22" height="7"/>
+    <rect x="0"  y="13" width="17" height="7"/>
+    <rect x="26" y="0"  width="7"  height="32"/>
+    <rect x="26" y="25" width="20" height="7"/>
+    <rect x="51" y="0"  width="7"  height="27"/>
+    <rect x="66" y="0"  width="7"  height="27"/>
+    <rect x="51" y="25" width="22" height="7" rx="2"/>
+    <polygon points="79,0 86,0 101,32 94,32"/>
+    <polygon points="94,0 101,0 86,32 79,32"/>
+  </g>
+</svg>

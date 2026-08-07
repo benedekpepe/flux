@@ -1,3 +1,5 @@
+<img src="assets/flux-logo.svg" alt="Flux" width="220">
+
 # Flux — FP&A reporting automation
 
 [![CI](https://github.com/benedekpepe/flux/actions/workflows/ci.yml/badge.svg)](https://github.com/benedekpepe/flux/actions/workflows/ci.yml)
@@ -182,6 +184,7 @@ flux/
 │   ├── demo.py                  # console P&L, drivers and commentary
 │   └── make_template.py         # builds data/input_template.xlsx
 ├── tests/audit.py               # end-to-end verification
+├── assets/                      # logo and mark (SVG)
 ├── data/                        # input template
 ├── docs/                        # screenshots used in this README
 └── .github/workflows/ci.yml     # lint, verification, pack build, app smoke test
