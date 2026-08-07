@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from flux import ingest
 from flux.ingest import (match_columns, _content_detect, apply_mapping,
                          CANONICAL, REQUIRED)
+from flux.coa import EXPENSE_TYPES
 from flux.engine import build_report, has_budget
 from flux.reporting import build_client_pack, build_demo_pack, build_pptx_pack
 from flux.synthetic_data import (generate_budget_year, generate_month,
@@ -245,7 +246,59 @@ with tab_upload:
             st.warning(f"Still need a column for: {', '.join(missing)}")
         else:
             std = apply_mapping(raw, final)
+            # The classification step only exists when there was something to
+            # classify, so the steps after it are numbered from what came before.
+            step = 3
+            cat_info = std.attrs.get("category_inference")
+            exp_info = std.attrs.get("expense_type_inference")
             std, notes = ingest.normalise_signs(std)
+
+            # The column mapping is confirmed above; the classification is the
+            # other guess in the pipeline and it was never shown. A misread
+            # chart of accounts produces a finished-looking pack with the bottom
+            # line inverted, so it gets the same treatment: say what was assumed,
+            # then let it be changed.
+            if cat_info is not None:
+                st.markdown("#### 3 · Confirm the account classification")
+                warnings = ingest.category_issues(
+                    list(std["account_code"]), list(std["account_name"]),
+                    list(std["category"]), cat_info)
+                if exp_info is not None:
+                    warnings += ingest.expense_type_issues(exp_info)
+                if cat_info["style"]:
+                    st.caption(
+                        f"Read as a {cat_info['style']} chart of accounts, "
+                        f"{int(cat_info['confidence'] * 100)}% corroborated by the "
+                        "account names. Change anything that looks wrong."
+                    )
+                else:
+                    st.caption("No known chart of accounts matched, so accounts "
+                               "were classified from their names. Change anything "
+                               "that looks wrong.")
+                for w in warnings:
+                    st.warning(w)
+
+                editable = std[["account_code", "account_name", "category"]].copy()
+                if "expense_type" in std.columns:
+                    editable["expense_type"] = std["expense_type"]
+                edited = st.data_editor(
+                    editable, key="category_editor", hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "account_code": st.column_config.TextColumn("Account", disabled=True),
+                        "account_name": st.column_config.TextColumn("Name", disabled=True),
+                        "category": st.column_config.SelectboxColumn(
+                            "Category", options=["Revenue", "COGS", "OpEx", "Other"],
+                            required=True),
+                        "expense_type": st.column_config.SelectboxColumn(
+                            "Expense type", options=[""] + EXPENSE_TYPES
+                            + [ingest.UNCLASSIFIED_EXPENSE]),
+                    },
+                )
+                std["category"] = edited["category"].values
+                if "expense_type" in edited.columns:
+                    std["expense_type"] = edited["expense_type"].fillna("").values
+                step = 4
 
             # The reporting month follows from the data: the latest period with
             # postings. Several periods also give a year-to-date view.
@@ -307,12 +360,12 @@ with tab_upload:
             if "period" in std.columns and len(found) > 1:
                 preview = ingest.filter_period(std, active)
 
-            st.markdown("#### 3 · Preview")
+            st.markdown(f"#### {step} · Preview")
             with st.expander("Standardised data (fed to the engine)"):
                 st.dataframe(std, width="stretch", hide_index=True)
             _pnl_preview(preview, budgeted)
 
-            st.markdown("#### 4 · Download the pack")
+            st.markdown(f"#### {step + 1} · Download the pack")
             st.caption(
                 "The workbook is the working file — every figure a live formula "
                 "over the input sheet. The deck is the five slides you send "

@@ -344,16 +344,19 @@ CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
         "penzugyi muveletek", "financial expense", "financial income",
         "tarsasagi ado", "income tax", "corporate tax", "deferred tax",
         "rendkivuli", "extraordinary", "impairment", "ertekveszt",
+        "abschreibung", "zinsen", "steuer vom einkommen", "ausserordentlich",
     )),
     ("Revenue", (
         "arbevetel", "ertekesites", "bevetel", "revenue", "sales", "turnover",
         "income from", "fee income", "subscription income", "net sales",
+        "erlose", "umsatzerlose", "umsatz", "ertrage aus",
     )),
     ("COGS", (
         "anyagkoltseg", "anyagjellegu", "kozvetlen", "elabe", "eladott aru",
         "eladott (koz)vetitett", "alapanyag", "alkatresz",
         "cost of sales", "cost of goods", "cogs", "direct labour",
         "direct labor", "material", "component", "merchandise", "purchases",
+        "wareneingang", "wareneinsatz", "rohstoffe", "fremdleistung",
         "freight", "fuvar", "szallitasi koltseg", "hosting", "infrastructure",
     )),
     ("OpEx", (
@@ -371,6 +374,8 @@ CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
         "contractor", "recruit", "training", "telephone", "telecom",
         "operating expense", "egyeb rafordit", "egyeb koltseg", "overhead",
         "occupancy", "repairs", "maintenance", "karbantartas",
+        "lohne", "gehalter", "personalkosten", "miete", "raumkosten",
+        "werbung", "versicherung", "reisekosten", "buromaterial",
     )),
 ]
 
@@ -417,6 +422,13 @@ CHART_STYLES: dict[str, "callable"] = {
     "SAP": lambda c: ({"40": "COGS", "41": "COGS", "48": "Other"}.get(c[:2])
                       or {"4": "OpEx", "8": "Revenue", "6": "OpEx",
                           "7": "OpEx", "2": "Other"}.get(c[:1])),
+    # SKR03, the German small-business chart: revenue in the 8000s like SAP but
+    # a different cost structure - 3 is goods inward, 4 is operating cost. It
+    # collides with SAP on the 4s and 8s, which is exactly what the agreement
+    # score against the account names is there to settle.
+    "SKR03": lambda c: ({"48": "Other"}.get(c[:2])
+                        or {"8": "Revenue", "3": "COGS", "4": "OpEx",
+                            "2": "Other"}.get(c[:1])),
     "Hungarian": _hungarian,
 }
 
@@ -550,8 +562,10 @@ def category_issues(codes, names, categories, info) -> list[str]:
         )
     if info.get("disagreed"):
         notes.append(
-            "The account name and the account code disagreed on these; the name "
-            f"was followed: {'; '.join(info['disagreed'][:5])}"
+            "The account name and the account code disagreed on these, and the "
+            "code was followed because the chart of accounts is corroborated "
+            f"across the file. Change any that are wrong: "
+            f"{'; '.join(info['disagreed'][:5])}"
             f"{' and others' if len(info['disagreed']) > 5 else ''}."
         )
     if len(info["defaulted"]) > max(2, len(codes) // 5):

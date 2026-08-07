@@ -82,7 +82,9 @@ automates.
 1. **Ingestion** — an arbitrary export is mapped onto the internal schema in
    layers: a synonym dictionary (English + Hungarian), fuzzy header matching,
    content detection from the data itself, and an optional LLM fallback for the
-   hard leftovers. The mapping is shown for approval and can be overridden.
+   hard leftovers. Accounts are then classified by category and expense type
+   from the codes and the names together. Both the mapping and the
+   classification are shown for approval and can be overridden.
 2. **Normalisation** — amounts are parsed across accounting sign conventions,
    posting lines are aggregated to account level keeping the analytical
    dimensions, and a credit-balance category is flipped to a positive magnitude.
@@ -220,8 +222,8 @@ So two independent readings are taken and made to agree:
 
 | Reading | From |
 | --- | --- |
-| **Account name** | keywords in English and Hungarian, deliberately narrow — it returns nothing when unsure |
-| **Account code** | candidate chart styles: `4-5-6-7`, SAP, Hungarian statutory |
+| **Account name** | keywords in English, Hungarian and German, deliberately narrow — it returns nothing when unsure |
+| **Account code** | candidate chart styles: `4-5-6-7`, SAP, SKR03, Hungarian statutory |
 
 Each chart style is scored on how often it agrees with the names. The winner has
 to clear a floor, so an unrecognised chart falls back to the names rather than
@@ -233,6 +235,16 @@ classified otherwise.
 
 A confident, fully corroborated match says nothing, because a warning that always
 fires is a warning nobody reads.
+
+The score is load-bearing, not decorative: SAP and SKR03 both put revenue in the
+8000s and disagree about the 4000s, and only the account names can tell them
+apart. Where a file's names carry no signal at all, the widest-covering chart is
+used and the pack says outright that nothing corroborates it.
+
+**The classification is confirmed in the app the same way the column mapping is** —
+an editable table of account, name, category and expense type, with the warnings
+above it. It is the second guess in the pipeline, and it was the one nobody was
+being shown.
 
 ### Expense types, where the file has none
 
@@ -403,7 +415,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 224 checks` means everything is wired up correctly.
+`PASSED all 233 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -464,7 +476,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**224 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**233 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

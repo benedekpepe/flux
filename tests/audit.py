@@ -254,6 +254,11 @@ def test_ingestion() -> None:
             ["4000", "5000", "6100", "7000"],
             ["Product revenue", "Materials", "Marketing spend", "Interest paid"],
             ["Revenue", "COGS", "OpEx", "Other"]),
+        "SKR03": (
+            ["8400", "8300", "3400", "4100", "4210", "4830"],
+            ["Erl\u00f6se 19% USt", "Erl\u00f6se steuerfrei", "Wareneingang",
+             "L\u00f6hne und Geh\u00e4lter", "Miete", "Abschreibungen"],
+            ["Revenue", "Revenue", "COGS", "OpEx", "OpEx", "Other"]),
     }
     for style, (codes, names, want) in charts.items():
         frame = pd.DataFrame({"Account": codes, "Account name": names,
@@ -266,6 +271,30 @@ def test_ingestion() -> None:
         std_c, _r, _i = ingest.ingest(frame)
         check(f"{style} revenue reaches the P&L",
               line(build_report(std_c), "Revenue").actual > 0, style)
+
+    # SAP and SKR03 both put revenue in the 8000s and disagree about the 4000s.
+    # Only the agreement score against the account names can tell them apart, so
+    # this is the check that the score is load-bearing rather than decorative.
+    sap_codes = ["800000", "400000", "430000"]
+    skr_codes = ["8400", "3400", "4100"]
+    _c, sap_info = ingest.infer_categories(
+        sap_codes, ["Sales revenue", "Raw materials", "Personnel expense"])
+    _c, skr_info = ingest.infer_categories(
+        skr_codes, ["Erl\u00f6se", "Wareneingang", "L\u00f6hne und Geh\u00e4lter"])
+    check("Two charts sharing a revenue range are told apart by the names",
+          sap_info["style"] == "SAP" and skr_info["style"] == "SKR03",
+          f"{sap_info['style']} / {skr_info['style']}")
+
+    # Account names carry no signal at all: the codes are the only evidence
+    # left, and refusing to read them would classify the ledger as all OpEx.
+    blind, blind_info = ingest.infer_categories(
+        ["4001", "5001", "6001", "7001"], ["", "", "", ""])
+    check("A file with no usable names still classifies from the codes",
+          blind == ["Revenue", "COGS", "OpEx", "Other"], str(blind))
+    check("A blind reading declares itself",
+          blind_info["blind"] and any("no account name carried" in i.lower()
+                                      for i in ingest.category_issues(
+                                          ["4001"], [""], blind, blind_info)))
 
     # A chart nobody recognises must fall back to the names, not to silence.
     odd_codes = ["A10", "A20", "B10", "C10"]
@@ -302,6 +331,23 @@ def test_ingestion() -> None:
     check("Revenue accounts get no expense type", etypes[6] == "")
     check("The inference reports how much of it was a guess",
           einfo["recognised"] == 5 and einfo["unclassified"] == 1, str(einfo))
+
+    # A manufacturer books direct labour into cost of sales, which the statutory
+    # chart puts under operating cost. The code wins - it is corroborated across
+    # the file - but the reader has to be told, or the disagreement is silent.
+    mixed_codes = ["911", "5111", "5411", "5511", "5711"]
+    mixed_names = ["Belfoldi ertekesites arbevetele", "Anyagkoltseg",
+                   "Kozvetlen berkoltseg (termeles)", "Bergarulekok",
+                   "Ertekcsokkenesi leiras"]
+    mixed, mixed_info = ingest.infer_categories(mixed_codes, mixed_names)
+    check("A name that contradicts a corroborated chart does not silently win",
+          mixed[2] == "OpEx", mixed[2])
+    reported = ingest.category_issues(mixed_codes, mixed_names, mixed, mixed_info)
+    check("The contradiction is reported so it can be overridden",
+          any("disagreed" in i and "Kozvetlen" in i for i in reported),
+          str(reported))
+    check("The report says which reading was followed",
+          any("the code was followed" in i for i in reported), str(reported))
 
     # A document number must never be read as an amount.
     docnum = pd.DataFrame({
