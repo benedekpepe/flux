@@ -27,7 +27,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from openpyxl import Workbook
-from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from ..coa import (PNL_STRUCTURE, CATEGORY_FAVOURABLE, FAV_HIGHER,
@@ -35,22 +34,23 @@ from ..coa import (PNL_STRUCTURE, CATEGORY_FAVOURABLE, FAV_HIGHER,
 from ..commentary import line_comments
 from ..engine import build_report
 from .styling import (
-    FONT, GREEN_INK, RED_INK,
     F_HEAD, F_BODY, F_SMALL, F_SUB, F_INPUT, F_KPI_LABEL, F_KPI_VALUE, F_NOTE,
-    F_META,
+    F_META, F_KPI_DELTA,
     FILL_HEAD, FILL_IVORY, FILL_BAND, FILL_WHITE,
-    CUR2, CUR_EUR, CUR2_EUR, PCT, RATE, KPI_DELTA, LCY_FORMATS,
+    CUR2, CUR_EUR, CUR2_EUR, PCT, RATE, KPI_DELTA, KPI_MONTH, KPI_MONTH_PCT,
+    LCY_FORMATS,
     CENTER, LEFT, RIGHT, WRAP, indent, band_fill,
     GOLD_SIDE, HEADER_BOTTOM, SUBTOTAL_TOP, TOTAL_TOP,
     hide_grid, title_band, headers, widths, outline, lever,
     wrapped_height, fit_text_columns,
+    signed_variance_cf,
     named_style,
     quiet_indicators, collect_quiet_ranges, suppress_error_indicators,
 )
 # The columns every reporting sheet shares are written by `rows`, so a sheet
 # here only supplies the five figures that depend on how it cuts the ledger.
-from .rows import (report_cf as _report_cf, write_sum_tail as _sum_tail,
-                   write_tail as _tail)
+from .rows import (lever_echo as _lever_echo, report_cf as _report_cf,
+                   write_sum_tail as _sum_tail, write_tail as _tail)
 from .formulas import (
     Layout,
     LEVER_EUR, LEVER_PCT, LEVER_MONTHS, LEV_E, LEV_P, LEV_M,
@@ -214,7 +214,7 @@ def _write_source_sheet(ws, df, spec, title, meta, footnote) -> tuple[int, int]:
     fit_text_columns(ws, text_cols, first, last)
 
     ws.cell(row=last + 2, column=1, value=footnote).font = F_NOTE
-    quiet_indicators(ws, 5, last)
+    quiet_indicators(ws, 4, last)
     ws.freeze_panes = f"A{first}"
     return first, last
 
@@ -329,43 +329,55 @@ def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report) -> N
     _report_cf(ws, L, first, last, rows_higher, rows_lower)
 
     # ---- KPI cards ----
-    # The big number is the month, because that is what the sheet is titled, what
-    # F/U judges and what the commentary describes - a card that headlined a
-    # different timeframe from the table beneath it would be read as a third
-    # figure. But "how is the year going" is the next question, so the card
-    # answers it in place rather than making the reader scan across to the YTD
-    # block themselves.
+    # The headline is the year to date: a single month is noisy, and cumulative
+    # performance against the annual plan is the figure a management P&L cover
+    # is read for. The month sits under it in the same card, so the reader gets
+    # the trend and the latest point without choosing between them.
+    #
+    # Both lines are laid out as cells with number formats rather than one cell
+    # built with TEXT(). TEXT() takes its format code in the user's own
+    # language, so "#,##0" is invalid on a Hungarian or German Excel and the
+    # whole card rendered #VALUE! there.
     cards = [("REVENUE", "Revenue"), ("OPERATING INCOME (EBIT)", "Operating income (EBIT)"),
              ("NET INCOME", "Net income")]
+    pct_cells = []
     for (title, key), (c1, c2) in zip(cards, [(1, 3), (5, 7), (9, 11)]):
-        lr = label_row[key]; fav = report[report["line"] == key].iloc[0]["fav_unfav"] == "F"
-        Lc = get_column_letter(c1); Rt = get_column_letter(c2)
+        lr = label_row[key]
+        Lc = get_column_letter(c1); Mid = get_column_letter(c2 - 1); Rt = get_column_letter(c2)
         for rr in (5, 6, 7, 8):
-            ws.merge_cells(f"{Lc}{rr}:{Rt}{rr}")
             for cc in range(c1, c2 + 1):
                 ws.cell(row=rr, column=cc).fill = FILL_IVORY
-        ws[f"{Lc}5"] = title; ws[f"{Lc}5"].font = F_KPI_LABEL
-        ws[f"{Lc}5"].alignment = LEFT
-        ws[f"{Lc}6"] = f"={L.act}{lr}"; ws[f"{Lc}6"].font = F_KPI_VALUE
-        ws[f"{Lc}6"].number_format = CUR_EUR
+        for rr in (5, 6, 7):
+            ws.merge_cells(f"{Lc}{rr}:{Rt}{rr}")
+        ws.merge_cells(f"{Lc}8:{Mid}8")
+
+        ws[f"{Lc}5"] = f"{title} · YTD"
+        ws[f"{Lc}5"].font = F_KPI_LABEL; ws[f"{Lc}5"].alignment = LEFT
+        ws[f"{Lc}6"] = f"={L.yact}{lr}"
+        ws[f"{Lc}6"].font = F_KPI_VALUE; ws[f"{Lc}6"].number_format = CUR_EUR
         ws[f"{Lc}6"].alignment = LEFT
-        ws[f"{Lc}7"] = f"={L.pct}{lr}"
+        ws[f"{Lc}7"] = f"={L.ypct}{lr}"
         ws[f"{Lc}7"].number_format = KPI_DELTA
-        ws[f"{Lc}7"].font = Font(name=FONT, size=9, bold=True,
-                                 color=GREEN_INK if fav else RED_INK)
-        ws[f"{Lc}7"].alignment = LEFT
-        # Muted, and built as text: the YTD line is context for the month above
-        # it, so it must not compete with the green or red delta.
-        ws[f"{Lc}8"] = (f'="YTD  "&TEXT({L.yact}{lr},"#,##0")&" \u20ac"'
-                        f'&IF(ISNUMBER({L.ypct}{lr}),"  \u00b7  "'
-                        f'&TEXT({L.ypct}{lr},"+0.0%;-0.0%")&" vs budget","")')
+        ws[f"{Lc}7"].font = F_KPI_DELTA; ws[f"{Lc}7"].alignment = LEFT
+        # The month, muted, as the second reading rather than the headline.
+        ws[f"{Lc}8"] = f"={L.act}{lr}"
+        ws[f"{Lc}8"].number_format = KPI_MONTH
         ws[f"{Lc}8"].font = F_META; ws[f"{Lc}8"].alignment = LEFT
+        ws[f"{Rt}8"] = f"={L.pct}{lr}"
+        ws[f"{Rt}8"].number_format = KPI_MONTH_PCT
+        ws[f"{Rt}8"].font = F_META; ws[f"{Rt}8"].alignment = LEFT
         outline(ws, 5, c1, 8, c2, GOLD_SIDE)
+        pct_cells.append(f"{Lc}7")
+    # Coloured by rule, not by a colour baked in at build time: the workbook is
+    # live, so an edited input used to move the number and leave the old green
+    # or red behind it. All three cards are profit or revenue lines, so higher
+    # is better and the sign is enough.
+    signed_variance_cf(ws, " ".join(pct_cells), True)
     ws.row_dimensions[5].height = 18; ws.row_dimensions[6].height = 26
     ws.row_dimensions[7].height = 14; ws.row_dimensions[8].height = 14
 
     widths(ws, L.widths(26) + [COMMENT_WIDTH])
-    quiet_indicators(ws, 5, last)
+    quiet_indicators(ws, 4, last)
     ws.freeze_panes = f"A{first}"
 
 
@@ -386,6 +398,7 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
     perno = int(period[:4]) * 100 + int(period[5:7])
 
     headers(ws, 5, L.headers("Expense Type"), center_from=2, center_to=L.ncols)
+    _lever_echo(ws, L)
 
     first, r, i = 6, 6, 0
     group_rows, all_rows = [], []
@@ -453,7 +466,7 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
 
     widths(ws, L.widths(28))
     fit_text_columns(ws, ["A"], first, r)
-    quiet_indicators(ws, 5, last + 2)
+    quiet_indicators(ws, 4, last + 2)
     ws.freeze_panes = f"B{first}"
 
 
@@ -471,6 +484,7 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None
     L = Layout(1)
     title_band(ws, "By Entity · net income by legal entity", meta_line(period), L.last_col)
     headers(ws, 5, L.headers("Entity"), center_from=2, center_to=L.ncols)
+    _lever_echo(ws, L)
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
     bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
     perno = int(period[:4]) * 100 + int(period[5:7])
@@ -523,7 +537,7 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None
                   "halves are on the P&L Report.").font = F_NOTE
     widths(ws, L.widths(18))
     fit_text_columns(ws, ["A"], first, r)
-    quiet_indicators(ws, 5, last + 2)
+    quiet_indicators(ws, 4, last + 2)
     ws.freeze_panes = f"A{first}"
 
 
@@ -537,6 +551,7 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
     title_band(ws, "Departments & Cost Centres · spend variance", meta_line(period), L.last_col)
     headers(ws, 5, L.headers("Department / Cost Centre"), center_from=2,
             center_to=L.ncols)
+    _lever_echo(ws, L)
 
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
     bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
@@ -608,7 +623,7 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
 
     widths(ws, L.widths(32))
     fit_text_columns(ws, ["A"], first, r)
-    quiet_indicators(ws, 5, last + 3)
+    quiet_indicators(ws, 4, last + 3)
     ws.freeze_panes = f"A{first}"
 
 
@@ -621,6 +636,7 @@ def _write_drivers(ws, agg, gl, glf, gll, bud, budf, budl, period) -> None:
     title_band(ws, "Variance Drivers · account level", meta_line(period), L.last_col)
     headers(ws, 5, L.headers("Account", "Name", "Category"),
             center_from=4, center_to=L.ncols)
+    _lever_echo(ws, L)
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
     bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
     perno = int(period[:4]) * 100 + int(period[5:7])
@@ -663,7 +679,7 @@ def _write_drivers(ws, agg, gl, glf, gll, bud, budf, budl, period) -> None:
     _report_cf(ws, L, first, last, rows_higher, rows_lower)
     widths(ws, L.widths(12, 30, 12))
     fit_text_columns(ws, ["B", "C"], first, last)
-    quiet_indicators(ws, 5, last)
+    quiet_indicators(ws, 4, last)
     ws.freeze_panes = f"A{first}"
 
 # ===========================================================================

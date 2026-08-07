@@ -50,6 +50,14 @@ F_KPI_VALUE = Font(name=FONT, size=16, bold=True, color=NAVY)
 F_NOTE = Font(name=FONT, size=8, italic=True, color=MUTE)
 F_FU = Font(name=FONT, size=10, bold=True, color=INK)
 F_FLAG = Font(name=FONT, size=9, bold=True, color=INK)
+# The KPI delta carries no colour of its own: a conditional-formatting rule
+# supplies green or red, so the card cannot keep yesterday's colour after the
+# workbook recalculates on an edited input.
+F_KPI_DELTA = Font(name=FONT, size=9, bold=True, color=INK)
+# The read-only echo of the P&L's levers on the other sheets: muted, and
+# without the input colour, so nobody types into a cell that is a formula.
+F_ECHO_LABEL = Font(name=FONT, size=8, bold=True, color=MUTE)
+F_ECHO = Font(name=FONT, size=8, color=MUTE)
 
 FILL_NAVY = PatternFill("solid", fgColor=NAVY)
 FILL_BRASS = PatternFill("solid", fgColor=BRASS)
@@ -77,6 +85,15 @@ CUR2_EUR = '#,##0.00" \u20ac";(#,##0.00)" \u20ac";"-"'
 PCT = '0.0%;(0.0%);-'
 RATE = '0.0000'
 KPI_DELTA = '+0.0%" vs budget";-0.0%" vs budget";0.0%" vs budget";@" vs budget"'
+
+# The KPI cards' second line, as two cell formats rather than a formula.
+# TEXT() takes its format code in the *user's* language - "#,##0" and "+0.0%"
+# are invalid in a Hungarian or German Excel, and the card rendered #VALUE! on
+# any non-English machine. A cell number format is written to styles.xml in a
+# single canonical form and translated by Excel on the way to the screen, so it
+# is the only way to label a figure that survives the trip to a client.
+KPI_MONTH = '"Month  "#,##0" \u20ac";"Month  "(#,##0)" \u20ac";"Month  "0" \u20ac"'
+KPI_MONTH_PCT = '+0.0%;-0.0%;0.0%;@'
 
 # Per-currency formats for local-currency amounts (the ledger mixes currencies,
 # so the symbol is applied row by row from the Ccy column).

@@ -19,9 +19,12 @@ both and neither should import the other.
 
 from __future__ import annotations
 
+from openpyxl.utils import get_column_letter
+
 from .formulas import (Layout, PL_E, PL_P, PL_M, flag_f, fu_f, pct_f,
                        run_rate_f, var_to_fy_f)
-from .styling import (CENTER, CUR, F_BODY, F_FLAG, F_FU, F_SUB, PCT, RIGHT,
+from .styling import (CENTER, CUR, CUR_EUR, F_BODY, F_ECHO, F_ECHO_LABEL,
+                      F_FLAG, F_FU, F_NOTE, F_SUB, LEFT, PCT, RIGHT,
                       badge_cf, signed_variance_cf, sqref, variance_cf)
 
 # Keys of the five figures a sheet has to supply itself.
@@ -46,6 +49,7 @@ def write_tail(ws, L: Layout, r: int, *, higher: bool, bold: bool = False,
     ws[c["ypct"]] = gate(pct_f(c["yvar"], c["ybud"]))
     ws[c["rr"]] = run_rate_f(c["yact"], months)
     ws[c["fyvar"]] = gate(var_to_fy_f(c["rr"], c["fybud"]))
+    ws[c["fypct"]] = gate(pct_f(c["fyvar"], c["fybud"]))
     ws[c["fu"]] = gate(fu_f(c["var"], higher))
     ws[c["flag"]] = gate(flag_f(c["var"], c["pct"], c["yvar"], c["ypct"],
                                 lev_e, lev_p))
@@ -80,6 +84,37 @@ def write_sum_tail(ws, L: Layout, r: int, rows, *, higher: bool, var=None,
                lev_e=lev_e, lev_p=lev_p, months=months)
 
 
+def lever_echo(ws, L: Layout) -> None:
+    """Show the P&L's lever values on a sheet that does not own them.
+
+    A reader looking at BOTH on the expense report cannot see what threshold
+    produced it without leaving the sheet, and the same goes for the month count
+    behind every run rate. So each sheet repeats the three numbers on the row
+    under the masthead.
+
+    Deliberately read-only, and styled to look it: no input colour, no box. Two
+    editable copies of one assumption is two sources of truth, which is the
+    problem the lever cells exist to solve. These are formulas pointing at the
+    P&L, so they follow it.
+    """
+    for label_range, label, cell, ref, fmt in (
+            ("A4:B4", "Materiality floor (\u20ac)", "C4", PL_E, CUR_EUR),
+            ("E4:F4", "Materiality floor (%)", "G4", PL_P, PCT),
+            ("I4:J4", "Months elapsed", "K4", PL_M, "0")):
+        ws.merge_cells(label_range)
+        head = label_range.split(":")[0]
+        ws[head] = label; ws[head].font = F_ECHO_LABEL; ws[head].alignment = LEFT
+        ws[cell] = f"={ref}"
+        ws[cell].font = F_ECHO; ws[cell].number_format = fmt
+        ws[cell].alignment = CENTER
+    note_col = get_column_letter(max(12, L.ncols - 3))
+    ws.merge_cells(f"{note_col}4:{L.last_col}4")
+    ws[f"{note_col}4"] = "set on the P&L Report"
+    ws[f"{note_col}4"].font = F_NOTE
+    ws[f"{note_col}4"].alignment = RIGHT
+    ws.row_dimensions[4].height = 15
+
+
 def report_cf(ws, L: Layout, first: int, last: int, rows_higher, rows_lower,
               *, var=None) -> None:
     """Badges, and the three variance blocks coloured by their own direction.
@@ -100,4 +135,4 @@ def report_cf(ws, L: Layout, first: int, last: int, rows_higher, rows_lower,
     variance_cf(ws, f"{L.var}{first}:{L.pct}{last}", f"${L.fu}{first}")
     for rows, higher in ((rows_higher, True), (rows_lower, False)):
         signed_variance_cf(ws, sqref([L.yvar, L.ypct], rows), higher)
-        signed_variance_cf(ws, sqref([L.fyvar], rows), higher)
+        signed_variance_cf(ws, sqref([L.fyvar, L.fypct], rows), higher)

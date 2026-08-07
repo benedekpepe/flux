@@ -43,8 +43,9 @@ automates.
   is judged on the amount instead. The flag names *which* timeframe cleared both
   floors — **MONTH**, **YTD** or **BOTH** — because a one-off overspend and a
   pattern that has been building all year need different answers.
-- **One layout on every sheet** — the month, the year to date, the full-year plan
-  and where the run rate lands against it, then F/U and the flag. The sheets
+- **One layout on every sheet** — the month, the year to date, and the full-year
+  plan with the run rate against it. Each of the three horizons gets the same
+  four columns (actual, plan, variance, variance %), then F/U and the flag. The sheets
   differ in what they cut the ledger by, never in how they report it, so a reader
   who has learnt the P&L has learnt the pack.
 - **Written commentary** per line and for the pack as a whole, generated from the
@@ -139,10 +140,19 @@ through 2025-06 · FY 2025 · €` — because every sheet now reports the same 
 horizons. "YTD 2025-06" on its own would not say whether that is the year through
 June or the month of June, so the window is named.
 
-The KPI cards headline the **month**, with the year to date muted beneath. The
-month is what the sheet is titled by, what F/U judges and what the commentary
-describes; a card that headlined a different timeframe from the table under it
-would read as a third figure rather than a summary of the first.
+The two floors and the month count are echoed **read-only** on every other
+sheet, under the masthead, so a reader who sees `BOTH` on the expense report can
+see what threshold produced it without leaving the sheet. They are formulas
+pointing at the P&L, not a second editable copy: two editable copies of one
+assumption is two sources of truth, which is the problem the levers exist to
+solve.
+
+The KPI cards headline the **year to date**, with the month muted beneath it. A
+single month is noisy; cumulative performance against the annual plan is what a
+management P&L cover is read for. Both figures are in the card, so nobody has to
+choose. The green or red on the delta comes from a conditional-formatting rule
+rather than a colour fixed at build time — the workbook is live, and a colour
+baked in at build time survived an edit that moved the number underneath it.
 
 Change one number and the whole pack re-flags or re-projects. That is enforced by
 the test suite, which reads the saved workbook back and checks that each sheet's

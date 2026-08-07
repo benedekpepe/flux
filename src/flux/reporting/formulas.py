@@ -58,19 +58,23 @@ NM_ABS_FLOOR = 100         # base below this counts as zero
 # ---------------------------------------------------------------------------
 # The shared column layout
 # ---------------------------------------------------------------------------
+# Each of the three horizons is reported the same way - a figure, its plan, the
+# variance and the variance as a percentage. The full-year block was missing its
+# percentage, which is the kind of asymmetry a reader notices before they can
+# say why: the eye expects the fourth column and finds F/U instead.
 CORE_HEADERS = ("Month Act", "Month Bud", "Month Var", "Var %",
                 "YTD Act", "YTD Bud", "YTD Var", "Var %",
-                "FY Budget", "Run rate FY", "Var to FY", "F/U", "Flag")
+                "FY Budget", "Run rate FY", "Var to FY", "Var %", "F/U", "Flag")
 
 # Widths are set here rather than per sheet, so a column that fits on one sheet
 # cannot be a row of hashes on another. The full-year columns are the widest:
 # an annual plan is an order of magnitude larger than a monthly one, and a
 # parenthesised seven-figure variance is the longest string the layout holds.
-CORE_WIDTHS = (13, 13, 13, 9, 13, 13, 13, 9, 14, 14, 14, 6, 9)
+CORE_WIDTHS = (13, 13, 13, 9, 13, 13, 13, 9, 14, 14, 14, 9, 6, 9)
 
 _CORE_KEYS = ("act", "bud", "var", "pct",
               "yact", "ybud", "yvar", "ypct",
-              "fybud", "rr", "fyvar", "fu", "flag")
+              "fybud", "rr", "fyvar", "fypct", "fu", "flag")
 
 
 class Layout:
@@ -85,7 +89,7 @@ class Layout:
     #: keys whose columns hold money and take the currency format
     MONEY = ("act", "bud", "var", "yact", "ybud", "yvar", "fybud", "rr", "fyvar")
     #: keys whose columns hold percentages
-    PCTS = ("pct", "ypct")
+    PCTS = ("pct", "ypct", "fypct")
 
     def __init__(self, label_cols: int = 1):
         self.label_cols = label_cols
