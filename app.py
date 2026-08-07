@@ -109,7 +109,10 @@ def _render_download(key: str, label: str):
                        mime=XLSX_MIME, width="stretch", key=f"dl_{key}")
 
 
-tab_upload, tab_sample = st.tabs(["Upload your data", "Use sample data"])
+# Sample data leads. A visitor arriving on the upload tab sees an empty form and
+# nothing the tool can do; arriving on the sample tab they see the KPIs, the P&L
+# and a pack they can generate in one click, with the upload tab right beside it.
+tab_sample, tab_upload = st.tabs(["Use sample data", "Upload your data"])
 
 # ---------------------------------------------------------------------------
 with tab_upload:
