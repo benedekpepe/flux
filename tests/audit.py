@@ -1155,6 +1155,23 @@ def test_edges() -> None:
               mstd is not None and set(mstd["account_name"]) == {"Arbevetel", "Berkoltseg"},
               "none" if mstd is None else str(list(mstd["account_name"])))
 
+        # Row heights are set by hand in a generator that cannot measure text,
+        # so every edit to the copy risks clipping it. Three blocks and the
+        # longest table note were clipped before this check existed.
+        howto = twb["How to fill"]
+        clipped = []
+        for row in range(1, howto.max_row + 1):
+            for col, per_line in ((1, 105), (3, 72)):
+                text = howto.cell(row=row, column=col).value
+                if not isinstance(text, str) or len(text) < 90:
+                    continue
+                height = howto.row_dimensions[row].height or 15
+                needed = 10 + 15 * (-(-len(text) // per_line))
+                if height + 1 < needed:
+                    clipped.append(f"row {row} col {col}: {height} < {needed}")
+        check("No text on the How-to-fill sheet is clipped by its row height",
+              not clipped, "; ".join(clipped[:4]))
+
         check("The expense-type dropdown is backed by a list, not typed by hand",
               any(str(dv.sqref).startswith("E") for dv in
                   twb["Input"].data_validations.dataValidation),

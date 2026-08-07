@@ -41,6 +41,23 @@ RIGHT = Alignment(horizontal="right", vertical="center")
 CENTER = Alignment(horizontal="center", vertical="center")
 WRAP = Alignment(wrap_text=True, vertical="top", horizontal="left")
 
+def prose_height(text: str, chars_per_line: int, *, floor: int = 16) -> float:
+    """The height a wrapped, merged block of text actually needs.
+
+    Excel auto-fits a wrapped row only when no height is set - and these rows do
+    set one, to keep the sheet's rhythm. openpyxl cannot measure text, so the
+    height was written by hand for each block and every later edit to the copy
+    left it clipped. Three of them were, including the one a reader meets first.
+    """
+    lines = max(1, -(-len(str(text)) // max(20, chars_per_line)))
+    return max(floor, 10 + 15 * lines)
+
+
+#: Characters that fit on one line of the merged A:C block (20 + 18 + 74).
+HOWTO_WIDTH = 105
+#: And of the notes column on its own.
+NOTES_WIDTH = 72
+
 COLUMNS = [
     ("period", "Accounting period", False, "The period the line belongs to, e.g. 2025-06. Fill it if the file covers more than one month; Flux then reports one period at a time."),
     ("account_code", "Account code", True, "Text or number, e.g. 4100."),
@@ -203,7 +220,7 @@ def build(path: Path) -> Path:
                  "four assumptions than fill a sheet.")
     ws2["A5"].alignment = WRAP
     ws2["A5"].font = F_BODY
-    ws2.row_dimensions[5].height = 88
+    ws2.row_dimensions[5].height = prose_height(ws2["A5"].value, HOWTO_WIDTH)
 
     ws2["A7"] = "Columns"
     ws2["A7"].font = F_H2
@@ -228,7 +245,9 @@ def build(path: Path) -> Path:
         if rr % 2:
             for c in range(1, 4):
                 ws2.cell(row=rr, column=c).fill = FILL_IVORY
-        ws2.row_dimensions[rr].height = 30
+        # The notes column wraps, so the row has to be as tall as its own note.
+        # A flat 30 clipped the longest of them mid-sentence.
+        ws2.row_dimensions[rr].height = prose_height(note, NOTES_WIDTH, floor=30)
         rr += 1
 
     ws2.cell(row=rr + 1, column=1, value="Department and cost centre").font = F_H2
@@ -251,7 +270,8 @@ def build(path: Path) -> Path:
                "rows are excluded from it either way.")
     h.alignment = WRAP
     h.font = F_BODY
-    ws2.row_dimensions[rr + 2].height = 96
+    ws2.row_dimensions[rr + 2].height = prose_height(
+        ws2.cell(row=rr + 2, column=1).value, HOWTO_WIDTH)
 
     ws2.cell(row=rr + 4, column=1, value="Numbers and periods").font = F_H2
     ws2.merge_cells(f"A{rr+5}:C{rr+5}")
@@ -264,9 +284,10 @@ def build(path: Path) -> Path:
                "all, the app asks what to label the report.")
     n.alignment = WRAP
     n.font = F_BODY
-    ws2.row_dimensions[rr + 5].height = 52
+    ws2.row_dimensions[rr + 5].height = prose_height(n.value, HOWTO_WIDTH)
 
-    for col, w in (("A", 20), ("B", 12), ("C", 74)):
+    # "Actual or Budget" needs the room: at 12 it read "Actual or B".
+    for col, w in (("A", 20), ("B", 18), ("C", 74)):
         ws2.column_dimensions[col].width = w
 
     # ---------------- Example: full GL export ----------------
@@ -319,9 +340,8 @@ def build(path: Path) -> Path:
     # Excel does not auto-fit a merged cell, so the height is estimated from the
     # text and the width it has to wrap inside. At eight columns the note ran to
     # five lines in a box built for four.
-    chars_per_line = max(40, span * 11)
-    lines = max(1, -(-len(ws3["A4"].value) // chars_per_line))
-    ws3.row_dimensions[4].height = max(34, 8 + 15 * lines)
+    ws3.row_dimensions[4].height = prose_height(
+        ws3["A4"].value, max(40, span * 11), floor=34)
 
     if sample is not None:
         hrow = 6
