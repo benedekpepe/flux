@@ -760,6 +760,39 @@ def test_workbooks() -> None:
 # 12  Edge cases and the app
 # ---------------------------------------------------------------------------
 def test_edges() -> None:
+    # A host that execs a module without registering it in sys.modules - a
+    # hot-reloading server, a plugin loader - makes dataclasses fail while it is
+    # guessing whether a string annotation is the KW_ONLY marker: it looks the
+    # class's module up in sys.modules, gets None, and the import dies with an
+    # AttributeError that names neither the module nor the field. Deferred
+    # annotations are what put dataclasses on that path, so the modules that
+    # define one must not ask for them.
+    import importlib.util
+
+    for name in ("coa", "engine", "ingest"):
+        path = Path(__file__).resolve().parents[1] / "src" / "flux" / f"{name}.py"
+        source = path.read_text(encoding="utf-8")
+        has_dataclass = "@dataclass" in source
+        # Match the statement, not a comment that quotes it.
+        deferred = any(l.strip() == "from __future__ import annotations"
+                       for l in source.splitlines())
+        check(f"{name}.py does not defer annotations while defining a dataclass",
+              not (has_dataclass and deferred),
+              "a dataclass under deferred annotations breaks on some hosts")
+        # A module using relative imports cannot be exec'd standalone at all,
+        # so the static check above is the guard for those.
+        if not has_dataclass or "\nfrom ." in source:
+            continue
+        spec = importlib.util.spec_from_file_location(f"_unregistered_{name}", path)
+        module = importlib.util.module_from_spec(spec)
+        try:
+            # Deliberately not added to sys.modules: that is the failing case.
+            spec.loader.exec_module(module)
+            check(f"{name}.py imports on a host that skips sys.modules", True)
+        except Exception as exc:  # pragma: no cover - the point of the check
+            check(f"{name}.py imports on a host that skips sys.modules", False,
+                  repr(exc))
+
     single = pd.DataFrame([{"account_code": "4000", "account_name": "Rev",
                             "category": "Revenue", "actual": 100.0,
                             "budget": 100.0, "prior_year": 100.0}])

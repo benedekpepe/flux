@@ -16,7 +16,16 @@ Turns a flat, leaf-level GL export into a management-ready P&L with:
 The output is a tidy DataFrame, one row per report line, ordered as the P&L.
 """
 
-from __future__ import annotations
+# Deliberately no `from __future__ import annotations` here.
+#
+# With string annotations, dataclasses has to guess whether each one is the
+# KW_ONLY marker, and does so by looking the class's module up in sys.modules.
+# In an environment where the module is not registered there - a hot-reloading
+# host, a loader that execs the module itself - that lookup returns None and
+# the import dies with an unrelated-looking AttributeError before any of this
+# code runs. The annotations in this module are all evaluatable at definition
+# time, so there is nothing to gain from deferring them and a deployment to
+# lose.
 from dataclasses import dataclass
 import pandas as pd
 
