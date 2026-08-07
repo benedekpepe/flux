@@ -45,8 +45,8 @@ COLUMNS = [
     ("period", "Accounting period", False, "The period the line belongs to, e.g. 2025-06. Fill it if the file covers more than one month; Flux then reports one period at a time."),
     ("account_code", "Account code", True, "Text or number, e.g. 4100."),
     ("account_name", "Account name", True, "Free text description."),
-    ("category", "Category", False, "Revenue / COGS / OpEx / Other. Left blank, Flux infers it from the account code."),
-    ("expense_type", "Expense type", False, "Natural classification, e.g. Salaries & wages, Marketing, External professional fees. Drives the Expense Report sheet."),
+    ("category", "Category", False, "Revenue / COGS / OpEx / Other. Left blank, Flux works it out from the account code and the account name together, and reports what it assumed."),
+    ("expense_type", "Expense type", False, "Natural classification - pick from the dropdown, or use your own names. Drives the Expense Report sheet. Left blank, Flux infers it from the account name, which is the weakest guess it makes."),
     ("entity", "Entity", False, "Legal entity or company code. With more than one, the pack adds a consolidation sheet."),
     ("department", "Department", False, "The roll-up level, e.g. Engineering."),
     ("cost_centre", "Cost centre", False, "The cost centre inside that department, in your own coding scheme, e.g. CC1200, EN40300 or 4100-02. Must belong to the department in the same row."),
@@ -137,9 +137,36 @@ def build(path: Path) -> Path:
     # Category dropdown.
     dv = DataValidation(type="list", formula1='"Revenue,COGS,OpEx,Other"', allow_blank=True)
     dv.error = "Choose Revenue, COGS, OpEx or Other (or leave blank)."
-    dv.prompt = "Optional - leave blank and Flux infers it from the account code."
+    dv.prompt = "Optional - leave blank and Flux works it out from the code and the name."
     ws.add_data_validation(dv)
     dv.add(f"D{hrow+1}:D{last_row}")
+
+    # And one for the expense types. Seventeen names typed by hand is seventeen
+    # chances to split one group across two spellings.
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        from flux.coa import EXPENSE_TYPES
+        # Excel caps an inline list at 250 characters and seventeen type names
+        # run well past that, so the list lives on a hidden sheet and the
+        # validation points at it.
+        lists = wb.create_sheet("Lists")
+        lists["A1"] = "Expense types - the list behind the dropdown on Input."
+        for i, etype in enumerate(EXPENSE_TYPES, start=2):
+            lists.cell(row=i, column=1, value=etype)
+        lists.column_dimensions["A"].width = 30
+        lists.sheet_state = "hidden"
+        ref = f"Lists!$A$2:$A${len(EXPENSE_TYPES) + 1}"
+        dv2 = DataValidation(type="list", formula1=ref, allow_blank=True)
+        # A warning, not a hard stop: a client's own expense names are valid
+        # input and get grouped under "Other expense types" rather than refused.
+        dv2.errorStyle = "warning"
+        dv2.error = "Not one of the standard types - your own names are fine too."
+        dv2.prompt = "Pick one, or type your own name."
+        ws.add_data_validation(dv2)
+        dv2.add(f"E{hrow+1}:E{last_row}")
+    except Exception as exc:  # pragma: no cover
+        print(f"WARNING: expense-type dropdown not added ({exc!r})")
 
     for i, (_, _, _, _) in enumerate(COLUMNS, start=1):
         ws.column_dimensions[get_column_letter(i)].width = [17, 14, 30, 13, 24, 15, 16, 15, 15, 15, 16][i - 1]
@@ -162,16 +189,21 @@ def build(path: Path) -> Path:
         ws2.cell(row=2, column=c).fill = FILL_BRASS
     ws2.row_dimensions[2].height = 3
 
-    ws2["A4"] = "This template is optional"
+    ws2["A4"] = "Why this template is the recommended way in"
     ws2["A4"].font = F_H2
     ws2.merge_cells("A5:C5")
-    ws2["A5"] = ("Flux reads most general-ledger and trial-balance exports as they are: it "
-                 "recognises common column names in English and Hungarian, matches close "
-                 "variants, and infers fields from the data. Use this template only if your "
-                 "export does not map cleanly, or if you are building the file by hand.")
+    ws2["A5"] = ("Flux also reads general-ledger and trial-balance exports as they are - it "
+                 "recognises column names in English, Hungarian and German, classifies the "
+                 "accounts from their codes and names, and drops the subtotal rows a printed "
+                 "report carries. The numbers come out the same either way when it reads the "
+                 "file correctly. What this template removes is the reading: nothing to map, "
+                 "no chart of accounts to recognise, no expense types inferred from account "
+                 "names, and no printed totals to filter out. Use it when the pack has to be "
+                 "right the first time; upload your raw export when you would rather check "
+                 "four assumptions than fill a sheet.")
     ws2["A5"].alignment = WRAP
     ws2["A5"].font = F_BODY
-    ws2.row_dimensions[5].height = 52
+    ws2.row_dimensions[5].height = 88
 
     ws2["A7"] = "Columns"
     ws2["A7"].font = F_H2
@@ -226,8 +258,10 @@ def build(path: Path) -> Path:
     n = ws2.cell(row=rr + 5, column=1)
     n.value = ("Amounts can use either European (1.234.567,89) or US (1,234,567.89) formatting; "
                "Flux parses both. Enter positive magnitudes: revenue as a positive number and "
-               "costs as positive numbers too. Fill one period per file, and set the reporting "
-               "period in the app sidebar.")
+               "costs as positive numbers too. Several periods in one file are fine and are "
+               "what produce the year-to-date columns - fill the Accounting period column and "
+               "Flux reports the latest month that carries postings. With no period column at "
+               "all, the app asks what to label the report.")
     n.alignment = WRAP
     n.font = F_BODY
     ws2.row_dimensions[rr + 5].height = 52

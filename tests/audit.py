@@ -1131,6 +1131,35 @@ def test_edges() -> None:
               estd is not None and line(build_report(estd), "Revenue").actual > 0,
               "no revenue in the example")
 
+        # The template's own example sheet is a ledger export, so it looks like
+        # data and can outscore a sparsely filled Input sheet. Filling only the
+        # required columns must still report the user's numbers, not the demo
+        # company's.
+        import shutil
+        minimal = Path(tempfile.mkdtemp()) / "minimal.xlsx"
+        shutil.copy(tpl, minimal)
+        mwb = _load(minimal)
+        mws = mwb["Input"]
+        for row in (6, 7, 8):
+            for col in range(1, 12):
+                mws.cell(row=row, column=col).value = None
+        for i, (code, name, amount) in enumerate(
+                [("4100", "Arbevetel", 900_000.0), ("6200", "Berkoltseg", 400_000.0)],
+                start=6):
+            mws.cell(row=i, column=2, value=code)
+            mws.cell(row=i, column=3, value=name)
+            mws.cell(row=i, column=9, value=amount)
+        mwb.save(minimal)
+        mstd, _mr, _mi = ingest.ingest(minimal)
+        check("A minimally filled template still beats its own example sheet",
+              mstd is not None and set(mstd["account_name"]) == {"Arbevetel", "Berkoltseg"},
+              "none" if mstd is None else str(list(mstd["account_name"])))
+
+        check("The expense-type dropdown is backed by a list, not typed by hand",
+              any(str(dv.sqref).startswith("E") for dv in
+                  twb["Input"].data_validations.dataValidation),
+              str([str(d.sqref) for d in twb["Input"].data_validations.dataValidation]))
+
     # A budget-only file is a legitimate upload: the engine needs an amount,
     # not specifically the actual.
     budget_only = pd.DataFrame({

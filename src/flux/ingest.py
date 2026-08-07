@@ -989,6 +989,15 @@ def _pick_sheet(sheets: dict) -> str:
     can use, with size as the tie-break. Scoring by the columns rather than by
     row count keeps a long list of notes from beating a short trial balance.
     """
+    # Flux's own template ships with an example ledger export on a third sheet,
+    # and that sheet looks exactly like data because it is data. Filled with
+    # only the required columns, the Input sheet scores lower than the example
+    # and the user gets a pack built from the demo company. A workbook carrying
+    # the template's own sheet is not ambiguous: use it.
+    for title in sheets:
+        if str(title).strip().casefold() == "input" and not sheets[title].empty:
+            return title
+
     best, best_key = None, (-1, -1)
     for title, frame in sheets.items():
         if frame.empty:
