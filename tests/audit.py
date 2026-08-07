@@ -1172,6 +1172,17 @@ def test_edges() -> None:
         check("No text on the How-to-fill sheet is clipped by its row height",
               not clipped, "; ".join(clipped[:4]))
 
+        # The middle column answers "what does this buy me", not "will it
+        # crash without this" - almost every column here is optional to the
+        # engine and load-bearing for the report.
+        buys = [howto.cell(row=r, column=2).value for r in range(1, howto.max_row + 1)]
+        check("The template says what each column gives you, not just Required",
+              "Expense Report sheet" in buys and "By Entity sheet" in buys,
+              str([b for b in buys if b][:6]))
+        check("Only the two amount columns share the one-of-these wording",
+              buys.count("Fill one of these two") == 2,
+              str(buys.count("Fill one of these two")))
+
         check("The expense-type dropdown is backed by a list, not typed by hand",
               any(str(dv.sqref).startswith("E") for dv in
                   twb["Input"].data_validations.dataValidation),

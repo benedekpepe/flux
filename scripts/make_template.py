@@ -53,23 +53,32 @@ def prose_height(text: str, chars_per_line: int, *, floor: int = 16) -> float:
     return max(floor, 10 + 15 * lines)
 
 
-#: Characters that fit on one line of the merged A:C block (20 + 18 + 74).
-HOWTO_WIDTH = 105
-#: And of the notes column on its own.
-NOTES_WIDTH = 72
+#: Characters that fit on one line of the merged A:C block (20 + 26 + 74).
+#: Deliberately under the arithmetic: a proportional font fits fewer characters
+#: than the column width suggests, and being generous with the height costs a
+#: little white space while being mean with it costs a clipped sentence.
+HOWTO_WIDTH = 96
+#: And of the notes column on its own (74 wide).
+NOTES_WIDTH = 66
 
+# (key, header label, marker, what filling it buys you, note)
+#
+# The second column used to read Required / Optional, which answers the wrong
+# question: it says what the engine needs in order not to stop, when what a
+# person filling this in wants to know is what each column buys them. Almost
+# everything here is optional to the engine and load-bearing for the report.
 COLUMNS = [
-    ("period", "Accounting period", False, "The period the line belongs to, e.g. 2025-06. Fill it if the file covers more than one month; Flux then reports one period at a time."),
-    ("account_code", "Account code", True, "Text or number, e.g. 4100."),
-    ("account_name", "Account name", True, "Free text description."),
-    ("category", "Category", False, "Revenue / COGS / OpEx / Other. Left blank, Flux works it out from the account code and the account name together, and reports what it assumed."),
-    ("expense_type", "Expense type", False, "Natural classification - pick from the dropdown, or use your own names. Drives the Expense Report sheet. Left blank, Flux infers it from the account name, which is the weakest guess it makes."),
-    ("entity", "Entity", False, "Legal entity or company code. With more than one, the pack adds a consolidation sheet."),
-    ("department", "Department", False, "The roll-up level, e.g. Engineering."),
-    ("cost_centre", "Cost centre", False, "The cost centre inside that department, in your own coding scheme, e.g. CC1200, EN40300 or 4100-02. Must belong to the department in the same row."),
-    ("actual", "Actual", "amount", "Actual amount for the reporting period. Fill either this or Budget - a budget-only file is a valid upload, and the app takes one as a second file."),
-    ("budget", "Budget", "amount", "Budgeted amount for the same period. Fill either this or Actual. Leave the column out entirely if the plan lives in a separate file."),
-    ("prior_year", "Prior year actual", False, "The same period last year, actual (not last year's budget)."),
+    ("period", "Accounting period", "", "YTD and run-rate columns", "The period the line belongs to, e.g. 2025-06. Several periods in one file is what produces the year-to-date view; Flux reports the latest month that carries postings."),
+    ("account_code", "Account code", "*", "Everything - required", "Text or number, e.g. 4100."),
+    ("account_name", "Account name", "*", "Everything - required", "Free text description."),
+    ("category", "Category", "", "Removes a guess", "Revenue / COGS / OpEx / Other. Left blank, Flux works it out from the account code and the account name together, and reports what it assumed."),
+    ("expense_type", "Expense type", "", "Expense Report sheet", "Natural classification - pick from the dropdown, or use your own names. Left blank, Flux infers it from the account name, which is the weakest guess it makes."),
+    ("entity", "Entity", "", "By Entity sheet", "Legal entity or company code. The consolidation sheet appears once there is more than one."),
+    ("department", "Department", "", "Departments & CCs sheet", "The roll-up level, e.g. Engineering."),
+    ("cost_centre", "Cost centre", "", "Cost centres inside it", "The cost centre inside that department, in your own coding scheme, e.g. CC1200, EN40300 or 4100-02. Must belong to the department in the same row."),
+    ("actual", "Actual", "\u2020", "Fill one of these two", "Actual amount for the reporting period. A budget-only file is a valid upload, and the app takes one as a second file."),
+    ("budget", "Budget", "\u2020", "Fill one of these two", "Budgeted amount for the same period. Leave the column out entirely if the plan lives in a separate file."),
+    ("prior_year", "Prior year actual", "", "Prior-year comparison", "The same period last year, actual (not last year's budget)."),
 ]
 
 EXAMPLES = [
@@ -103,8 +112,9 @@ def build(path: Path) -> Path:
     ws.row_dimensions[1].height = 34
 
     ws.merge_cells(f"A2:{last}2")
-    ws["A2"] = ("One row per account for one reporting period. Delete the three example "
-                "rows below.  * required  \u2020 fill either Actual or Budget")
+    ws["A2"] = ("One row per account per period. Delete the three example rows below.  "
+                "* required  \u2020 fill one of these two  "
+                "\u00b7  every other column adds a sheet or a comparison - see How to fill")
     ws["A2"].font = Font(name=FONT, size=9, color=MUTE)
     ws["A2"].alignment = LEFT
     ws.row_dimensions[2].height = 16
@@ -115,12 +125,9 @@ def build(path: Path) -> Path:
     ws.row_dimensions[3].height = 3
 
     hrow = 5
-    for i, (key, label, required, _) in enumerate(COLUMNS, start=1):
-        # "*" is required outright; "†" is one-of-these - marking Actual as
-        # required outright was wrong, because the engine only needs an amount
-        # and a budget-only file is a legitimate upload.
-        mark = {True: " *", "amount": " \u2020"}.get(required, "")
-        cell = ws.cell(row=hrow, column=i, value=label + mark)
+    for i, (key, label, mark, _buys, _note) in enumerate(COLUMNS, start=1):
+        # "*" is required outright; "†" means fill one of the two it marks.
+        cell = ws.cell(row=hrow, column=i, value=label + (f" {mark}" if mark else ""))
         cell.font = F_HEAD
         cell.fill = FILL_NAVY
         cell.alignment = CENTER if i >= 9 else LEFT
@@ -185,7 +192,7 @@ def build(path: Path) -> Path:
     except Exception as exc:  # pragma: no cover
         print(f"WARNING: expense-type dropdown not added ({exc!r})")
 
-    for i, (_, _, _, _) in enumerate(COLUMNS, start=1):
+    for i, _spec in enumerate(COLUMNS, start=1):
         ws.column_dimensions[get_column_letter(i)].width = [17, 14, 30, 13, 24, 15, 16, 15, 15, 15, 16][i - 1]
     ws.column_dimensions[get_column_letter(len(COLUMNS) + 2)].width = 26
     ws.freeze_panes = f"A{hrow+1}"
@@ -222,23 +229,38 @@ def build(path: Path) -> Path:
     ws2["A5"].font = F_BODY
     ws2.row_dimensions[5].height = prose_height(ws2["A5"].value, HOWTO_WIDTH)
 
-    ws2["A7"] = "Columns"
-    ws2["A7"].font = F_H2
-    hdr = ["Column", "Required", "Notes"]
+    # Rows are counted, not written in by hand: inserting a paragraph used to
+    # mean renumbering every block below it, and a missed one silently
+    # overwrote its neighbour.
+    rr = 7
+    ws2.cell(row=rr, column=1, value="Columns").font = F_H2
+    rr += 1
+
+    ws2.merge_cells(f"A{rr}:C{rr}")
+    lead = ws2.cell(row=rr, column=1)
+    lead.value = ("Only the account code, the account name and one amount column are "
+                  "strictly required - that is the whole of what Flux needs to produce a "
+                  "P&L. Everything else turns that into the full pack: each column adds a "
+                  "sheet, a comparison or removes a guess, and the middle column below "
+                  "says which. Fill every one you have and the pack is complete.")
+    lead.alignment = WRAP
+    lead.font = F_BODY
+    ws2.row_dimensions[rr].height = prose_height(lead.value, HOWTO_WIDTH)
+    rr += 2
+
+    hdr = ["Column", "What it gives you", "Notes"]
     for c, h in enumerate(hdr, start=1):
-        cell = ws2.cell(row=8, column=c, value=h)
+        cell = ws2.cell(row=rr, column=c, value=h)
         cell.font = F_HEAD
         cell.fill = FILL_NAVY
         cell.alignment = LEFT
-    ws2.row_dimensions[8].height = 20
-
-    rr = 9
-    for key, label, required, note in COLUMNS:
+    ws2.row_dimensions[rr].height = 20
+    rr += 1
+    for key, label, mark, buys, note in COLUMNS:
         ws2.cell(row=rr, column=1, value=label).font = F_BODY
-        wording = {True: "Required", "amount": "Actual or Budget"}.get(required, "Optional")
-        c2 = ws2.cell(row=rr, column=2, value=wording)
-        c2.font = Font(name=FONT, size=10, bold=bool(required),
-                       color=NAVY if required else MUTE)
+        c2 = ws2.cell(row=rr, column=2, value=buys)
+        c2.font = Font(name=FONT, size=10, bold=bool(mark),
+                       color=NAVY if mark else MUTE)
         c3 = ws2.cell(row=rr, column=3, value=note)
         c3.font = F_BODY
         c3.alignment = WRAP
@@ -287,7 +309,7 @@ def build(path: Path) -> Path:
     ws2.row_dimensions[rr + 5].height = prose_height(n.value, HOWTO_WIDTH)
 
     # "Actual or Budget" needs the room: at 12 it read "Actual or B".
-    for col, w in (("A", 20), ("B", 18), ("C", 74)):
+    for col, w in (("A", 20), ("B", 26), ("C", 74)):
         ws2.column_dimensions[col].width = w
 
     # ---------------- Example: full GL export ----------------
