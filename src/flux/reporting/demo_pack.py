@@ -40,6 +40,7 @@ from .styling import (
     CENTER, LEFT, RIGHT, WRAP, indent, band_fill,
     GOLD_SIDE, HEADER_BOTTOM, SUBTOTAL_TOP, TOTAL_TOP,
     hide_grid, title_band, headers, widths, outline, badge_cf, wrapped_height, fit_text_columns,
+    variance_cf, spend_variance_cf,
     named_style,
     quiet_indicators, collect_quiet_ranges, suppress_error_indicators,
 )
@@ -294,6 +295,7 @@ def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report) -> N
         label_row[line.label] = r; r += 1
     last = r - 1
     badge_cf(ws, f"I{first}:I{last}", f"J{first}:J{last}")
+    variance_cf(ws, f"D{first}:E{last}", f"$I{first}")
 
     cards = [("REVENUE", "Revenue"), ("OPERATING INCOME (EBIT)", "Operating income (EBIT)"), ("NET INCOME", "Net income")]
     for (title, key), (c1, c2) in zip(cards, [(1, 3), (5, 7), (9, 11)]):
@@ -418,6 +420,8 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
     ws.row_dimensions[r].height = 24
 
     badge_cf(ws, None, f"L{first}:L{r}")
+    spend_variance_cf(ws, f"D{first}:E{r}")
+    spend_variance_cf(ws, f"H{first}:I{r}")
     ws.cell(row=r + 2, column=1,
             value="Expense types are grouped as a management report reads them: cost of "
                   "sales, then operating costs with personnel first, then non-cash and "
@@ -474,6 +478,7 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None
         ws[f"{col}{r}"].fill = FILL_IVORY; ws[f"{col}{r}"].border = SUBTOTAL_TOP
     ws.row_dimensions[r].height = 24
     badge_cf(ws, f"H{first}:H{last}", None)
+    variance_cf(ws, f"F{first}:G{last}", f"$H{first}")
     widths(ws, [16, 15, 15, 15, 15, 14, 9, 6])
     quiet_indicators(ws, 5, last + 2)
     ws.freeze_panes = f"A{first}"
@@ -485,9 +490,9 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None
 def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> None:
     """Departmental spend variance with each department's cost centres nested."""
     hide_grid(ws)
-    title_band(ws, "Departments & Cost Centres · spend variance", f"Reporting month {period}  ·  \u20ac", "H")
+    title_band(ws, "Departments & Cost Centres · spend variance", f"Reporting month {period}  ·  \u20ac", "G")
     headers(ws, 5, ["Department / Cost Centre", "Actual", "Budget", "Var (Bud)", "Var %",
-                     "F/U", "Flag", ""], center_from=2, center_to=7)
+                     "F/U", "Flag"], center_from=2, center_to=7)
 
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
     bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
@@ -564,12 +569,13 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
     ws.row_dimensions[r].height = 24
 
     badge_cf(ws, f"F{first}:F{last}", f"G{first}:G{last}")
+    variance_cf(ws, f"D{first}:E{r}", f"$F{first}")
     ws.cell(row=r + 2, column=1,
             value="Departments are bold roll-ups; cost centres are indented beneath their "
                   "department, shown as code plus description. Totals sum the departments "
                   "only. Revenue is excluded: this is a spend view.").font = F_NOTE
 
-    widths(ws, [32, 15, 15, 15, 10, 6, 11, 2])
+    widths(ws, [32, 15, 15, 15, 10, 6, 11])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 5, last + 3)
     ws.freeze_panes = f"A{first}"
@@ -617,6 +623,7 @@ def _write_drivers(ws, agg, gl, glf, gll, bud, budf, budl, period) -> None:
     ws.conditional_formatting.add(f"F{first}:F{last}",
         DataBarRule(start_type="min", end_type="max", color=BAR, showValue=True))
     badge_cf(ws, f"H{first}:H{last}", f"I{first}:I{last}")
+    variance_cf(ws, f"F{first}:G{last}", f"$H{first}")
     widths(ws, [12, 30, 12, 15, 15, 15, 10, 6, 11])
     fit_text_columns(ws, ["B", "C"], first, last)
     quiet_indicators(ws, 5, last)

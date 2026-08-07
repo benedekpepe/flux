@@ -253,6 +253,35 @@ def badge_cf(ws, rng_fu, rng_flag) -> None:
             font=Font(name=FONT, size=9, bold=True, color=AMBER_INK)))
 
 
+def variance_cf(ws, rng, fu_ref) -> None:
+    """Colour a variance range from the favourable/unfavourable verdict.
+
+    The sign alone cannot carry the meaning: revenue below plan and cost above
+    plan are both bad news with opposite signs. Driving the colour from the F/U
+    cell keeps the numbers and the badge telling the same story, and matches how
+    the deck renders the same figures.
+
+    Only the colour is set, so the weight of a subtotal row survives.
+    """
+    from openpyxl.formatting.rule import FormulaRule
+
+    ws.conditional_formatting.add(rng, FormulaRule(
+        formula=[f'{fu_ref}="F"'], font=Font(color=GREEN_INK)))
+    ws.conditional_formatting.add(rng, FormulaRule(
+        formula=[f'{fu_ref}="U"'], font=Font(color=RED_INK)))
+
+
+def spend_variance_cf(ws, rng) -> None:
+    """Colour a variance range on a sheet with no F/U column.
+
+    Every line there is a cost, so lower is better and the sign is enough.
+    """
+    ws.conditional_formatting.add(rng, CellIsRule(
+        operator="greaterThan", formula=["0"], font=Font(color=RED_INK)))
+    ws.conditional_formatting.add(rng, CellIsRule(
+        operator="lessThan", formula=["0"], font=Font(color=GREEN_INK)))
+
+
 def note(ws, row, text) -> None:
     ws.cell(row=row, column=1, value=text).font = F_NOTE
 

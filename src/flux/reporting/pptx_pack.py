@@ -241,7 +241,8 @@ def _kpi_card(s, x, y, w, label, value, delta, favourable, budgeted):
 
 def _result(prs, report, gl, period, budgeted):
     s = _blank(prs)
-    _slide_header(s, "The result", "Where the month landed", f"Reporting month {period}")
+    _slide_header(s, "The result", "Where the month landed",
+                  f"Reporting month {period}  ·  EUR")
 
     def line(label):
         return report[report.line == label].iloc[0]
@@ -397,6 +398,15 @@ def _year_to_date(prs, ytd_report, month_report, months, period, budgeted):
     chart.legend.font.size = Pt(10)
     chart.legend.font.name = FONT
     chart.plots[0].gap_width = 70
+    chart.plots[0].has_data_labels = True
+    ytd_labels = chart.plots[0].data_labels
+    ytd_labels.number_format = '#,##0;(#,##0)'
+    ytd_labels.number_format_is_linked = False
+    ytd_labels.font.size = Pt(9)
+    ytd_labels.font.name = FONT
+    ytd_labels.font.bold = True
+    ytd_labels.font.color.rgb = WHITE
+    ytd_labels.position = XL_LABEL_POSITION.INSIDE_END
     for series, colour in zip(chart.series, (SLATE, BRASS)):
         series.format.fill.solid()
         series.format.fill.fore_color.rgb = colour
@@ -550,6 +560,7 @@ def _drivers(prs, gl, materiality, period, budgeted):
              "percentage on a small base does not crowd out the real movers.",
              11, False, INK), None,
             (f"{len(material)} account(s) qualified", 12, True, NAVY), None,
+            ("Their variances add up to:", 11, False, MUTE), None,
             (f"Unfavourable  {_mag(unfav)}", 12, False, RED), None,
             (f"Favourable  {_mag(fav)}" if fav else "Favourable  none",
              12, False, GREEN if fav else MUTE), None,

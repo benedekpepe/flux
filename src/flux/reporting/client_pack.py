@@ -35,6 +35,7 @@ from .styling import (
     CENTER, LEFT, RIGHT, WRAP, indent, band_fill,
     GOLD_SIDE, SUBTOTAL_TOP, TOTAL_TOP,
     hide_grid, title_band, headers, widths, outline, badge_cf, note, wrapped_height,
+    variance_cf, spend_variance_cf,
     fit_text_columns,
     quiet_indicators, collect_quiet_ranges, suppress_error_indicators,
 )
@@ -212,6 +213,10 @@ def _pnl(ws, gl, glf, gll, L, period, comments, report, var, perno=None, ytd=Fal
         label_row[line.label] = r; r += 1
     last = r - 1
     badge_cf(ws, f"{fu_col}{first}:{fu_col}{last}", f"{flag_col}{first}:{flag_col}{last}")
+    if var:
+        variance_cf(ws, f"D{first}:E{last}", f"${fu_col}{first}")
+        if ytd:
+            variance_cf(ws, f"H{first}:I{last}", f"${fu_col}{first}")
 
     for (title, key), (c1, c2) in zip(
         [("REVENUE", "Revenue"), ("OPERATING INCOME (EBIT)", "Operating income (EBIT)"),
@@ -355,6 +360,8 @@ def _dimension_sheet(ws, values, gl, glf, gll, L, period, title, first_header,
 
     flag_rng = None if revenue_split else (f"K{first}:K{last}" if ytd else f"G{first}:G{last}")
     badge_cf(ws, f"{fu_col}{first}:{fu_col}{last}", flag_rng)
+    if var:
+        variance_cf(ws, f"D{first}:E{last}", f"${fu_col}{first}")
     widths(ws, [26, 15, 15, 15, 15, 14, 9, 6] if revenue_split
                 else [30, 13, 13, 12, 9, 13, 13, 12, 9, 6, 11] if ytd
                 else [30, 15, 15, 15, 10, 6, 11, 2])
@@ -473,6 +480,10 @@ def _expense_sheet(ws, groups, gl, glf, gll, L, period, var, perno=None, ytd=Fal
         ws.cell(row=r, column=c).border = TOTAL_TOP
 
     badge_cf(ws, f"{fu_col}{first}:{fu_col}{r}", f"{flag_col}{first}:{flag_col}{r}")
+    if var:
+        spend_variance_cf(ws, f"D{first}:E{r}")
+        if ytd:
+            spend_variance_cf(ws, f"H{first}:I{r}")
     ws.cell(row=r + 2, column=1,
             value="Grouped as a cost owner reads them: personnel first, then other "
                   "operating costs, cost of sales, and non-cash and financing items. "
@@ -489,9 +500,9 @@ def _expense_sheet(ws, groups, gl, glf, gll, L, period, var, perno=None, ytd=Fal
 def _departments(ws, hierarchy, gl, glf, gll, L, period, has_cc, var, perno=None):
     hide_grid(ws)
     title_band(ws, "Departments & Cost Centres · spend variance",
-                   f"Reporting month {period}  ·  \u20ac", "H")
+                   f"Reporting month {period}  ·  \u20ac", "G")
     headers(ws, 5, ["Department / Cost centre", "Actual", "Budget", "Var (Bud)",
-                        "Var %", "F/U", "Flag", ""], center_from=2, center_to=7)
+                        "Var %", "F/U", "Flag"], center_from=2, center_to=7)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
     dep, cat = R(L["department"]), R(L["category"])
     act, bud = R(L["actual"]), R(L["budget"])
@@ -557,10 +568,12 @@ def _departments(ws, hierarchy, gl, glf, gll, L, period, has_cc, var, perno=None
         cell.border = TOTAL_TOP
     ws.row_dimensions[r].height = 24
     badge_cf(ws, f"F{first}:F{last}", f"G{first}:G{last}")
+    if var:
+        variance_cf(ws, f"D{first}:E{r}", f"$F{first}")
     ws.cell(row=r + 2, column=1,
             value="Departments are roll-ups; cost centres are indented beneath them. "
                   "Revenue is excluded: this is a spend view.").font = F_NOTE
-    widths(ws, [32, 15, 15, 15, 10, 6, 11, 2])
+    widths(ws, [32, 15, 15, 15, 10, 6, 11])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 5, last + 3)
     ws.freeze_panes = f"A{first}"
@@ -616,6 +629,8 @@ def _drivers(ws, agg, gl, glf, gll, L, period, var, perno=None):
     ws.conditional_formatting.add(f"F{first}:F{last}",
         DataBarRule(start_type="min", end_type="max", color=BAR, showValue=True))
     badge_cf(ws, f"H{first}:H{last}", f"I{first}:I{last}")
+    if var:
+        variance_cf(ws, f"F{first}:G{last}", f"$H{first}")
     widths(ws, [12, 30, 12, 15, 15, 15, 10, 6, 11])
     fit_text_columns(ws, ["B", "C"], first, last)
     quiet_indicators(ws, 5, last)
