@@ -115,10 +115,18 @@ tab_upload, tab_sample = st.tabs(["Upload your data", "Use sample data"])
 with tab_upload:
     st.markdown("#### 1 · Upload your data")
     col_a, col_b = st.columns([3, 1])
-    up = col_a.file_uploader(
-        "Actuals — GL extract or trial balance", type=["csv", "xlsx", "xls"],
-        accept_multiple_files=False, key="up_actuals",
-    )
+    with col_a:
+        # Both uploaders share this column. Left to the full page width, the
+        # budget one rendered wider than the actuals one and the mismatch read
+        # as a mistake rather than a hierarchy.
+        up = st.file_uploader(
+            "Actuals — GL extract or trial balance", type=["csv", "xlsx", "xls"],
+            accept_multiple_files=False, key="up_actuals",
+        )
+        up_bud = st.file_uploader(
+            "Budget — optional second file, if the plan lives outside the ledger",
+            type=["csv", "xlsx", "xls"], accept_multiple_files=False, key="up_budget",
+        )
     with col_b:
         tpath = Path(__file__).parent / "data" / "input_template.xlsx"
         if tpath.exists():
@@ -128,11 +136,12 @@ with tab_upload:
                 width="stretch",
             )
             st.caption("Optional — Flux reads most exports as they are.")
-
-    up_bud = st.file_uploader(
-        "Budget — optional second file, if the plan lives outside the ledger",
-        type=["csv", "xlsx", "xls"], accept_multiple_files=False, key="up_budget",
-    )
+        st.markdown("")
+        st.caption(
+            "**The pack adapts to your columns.** An expense-type column adds the "
+            "Expense Report, a department column adds Departments & Cost Centres, "
+            "and more than one entity adds a consolidation sheet."
+        )
 
     if up is not None:
         raw = ingest.load_file(up)
