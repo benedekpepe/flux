@@ -30,7 +30,7 @@ from ..commentary import line_comments
 from ..engine import build_report, has_budget as _detect_budget
 from .styling import (
     FONT, GREEN_INK, RED_INK,
-    F_BODY, F_SMALL, F_SUB, F_INPUT, F_KPI_LABEL, F_KPI_VALUE, F_NOTE,
+    F_BODY, F_SMALL, F_SUB, F_INPUT, F_KPI_LABEL, F_KPI_VALUE, F_NOTE, F_META,
     FILL_IVORY, FILL_BAND, FILL_WHITE,
     CUR_EUR, PCT, KPI_DELTA,
     LEFT, RIGHT, WRAP, indent, band_fill,
@@ -46,7 +46,7 @@ from .rows import (BASE_KEYS, report_cf as _report_cf,
 from .formulas import (
     Layout,
     LEVER_EUR, LEVER_PCT, LEVER_MONTHS, LEV_E, LEV_P, LEV_M,
-    DEFAULT_ABS_THRESHOLD, DEFAULT_PCT_THRESHOLD,
+    DEFAULT_ABS_THRESHOLD, DEFAULT_PCT_THRESHOLD, meta_line,
     Variance, NO_BUDGET_NOTE, SINGLE_PERIOD_NOTE,
 )
 
@@ -82,7 +82,7 @@ def _gl_input(ws, agg, period, dims, budgeted=True):
     money = {"actual", "budget", "prior_year"}
     ints = {"period_no"}
 
-    title_band(ws, "GL Input · account level", f"Reporting month {period}  ·  \u20ac",
+    title_band(ws, "GL Input · account level", meta_line(period),
                    get_column_letter(len(spec)))
     headers(ws, 5, [l for _k, l, _w in spec],
                 center_from=len(spec) - 2, center_to=len(spec))
@@ -155,8 +155,7 @@ def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
     L = Layout(1)
     com = get_column_letter(L.ncols + 1)
     title_band(ws, "Management P&L · Variance Report",
-               f"Reporting month {period}  ·  with year to date and full-year run rate"
-               f"  ·  \u20ac", com)
+               meta_line(period, single_period), com)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
     cat, act, bud = R(GLC["category"]), R(GLC["actual"]), R(GLC["budget"])
     mflt, yflt = _filters(R, GLC, perno)
@@ -176,6 +175,10 @@ def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
     ws["M9"] = ("F/U judges the month variance; Flag names which timeframe "
                 "clears both floors.")
     ws["M9"].font = F_NOTE; ws["M9"].alignment = LEFT
+    # The KPI cards now run to row 8, so the lever row sits directly beneath
+    # them. A little more height is what keeps it from reading as a fourth line
+    # of the card.
+    ws.row_dimensions[9].height = 20
 
     headers(ws, 10, L.headers("") + ["Commentary"], center_from=2,
             center_to=L.ncols)
@@ -228,13 +231,17 @@ def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
     last = r - 1
     _report_cf(ws, L, first, last, rows_higher, rows_lower, var=var)
 
+    # The big number is the month - the sheet is titled by it, F/U judges it and
+    # the commentary describes it - with the year to date beneath as context, so
+    # the card answers "and how is the year going" without the reader scanning
+    # across to the YTD block.
     for (title, key), (c1, c2) in zip(
         [("REVENUE", "Revenue"), ("OPERATING INCOME (EBIT)", "Operating income (EBIT)"),
          ("NET INCOME", "Net income")],
         [(1, 3), (5, 7), (9, 11)]):
         lr = label_row[key]; fav = report[report["line"] == key].iloc[0]["fav_unfav"] == "F"
         Lc = get_column_letter(c1); Rt = get_column_letter(c2)
-        for rr in (5, 6, 7):
+        for rr in (5, 6, 7, 8):
             ws.merge_cells(f"{Lc}{rr}:{Rt}{rr}")
             for cc in range(c1, c2 + 1):
                 ws.cell(row=rr, column=cc).fill = FILL_IVORY
@@ -248,9 +255,15 @@ def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
         ws[f"{Lc}7"].font = Font(name=FONT, size=9, bold=True,
                                  color=GREEN_INK if fav else RED_INK)
         ws[f"{Lc}7"].alignment = LEFT
-        outline(ws, 5, c1, 7, c2, GOLD_SIDE)
+        # Muted, and built as text: the YTD line is context for the month above
+        # it, so it must not compete with the green or red delta.
+        ws[f"{Lc}8"] = (f'="YTD  "&TEXT({L.yact}{lr},"#,##0")&" \u20ac"'
+                        f'&IF(ISNUMBER({L.ypct}{lr}),"  \u00b7  "'
+                        f'&TEXT({L.ypct}{lr},"+0.0%;-0.0%")&" vs budget","")')
+        ws[f"{Lc}8"].font = F_META; ws[f"{Lc}8"].alignment = LEFT
+        outline(ws, 5, c1, 8, c2, GOLD_SIDE)
     ws.row_dimensions[5].height = 18; ws.row_dimensions[6].height = 26
-    ws.row_dimensions[7].height = 16
+    ws.row_dimensions[7].height = 14; ws.row_dimensions[8].height = 14
     widths(ws, width_list)
 
     footnote = last + 2
@@ -265,7 +278,8 @@ def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
 # ---------------------------------------------------------------------------
 # By Entity
 # ---------------------------------------------------------------------------
-def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None):
+def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None,
+               single_period=False):
     """Net income per legal entity, on the columns every other sheet uses.
 
     Net income - revenue less spend - is the one measure that consolidates to
@@ -274,8 +288,7 @@ def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None):
     """
     hide_grid(ws)
     L = Layout(1)
-    title_band(ws, "By Entity · consolidation",
-               f"Reporting month {period}  ·  with year to date  ·  \u20ac", L.last_col)
+    title_band(ws, "By Entity · consolidation", meta_line(period, single_period), L.last_col)
     headers(ws, 5, L.headers("Entity"), center_from=2, center_to=L.ncols)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
     dim, cat = R(GLC["entity"]), R(GLC["category"])
@@ -343,12 +356,12 @@ def _group_expense_types(values: list[str]) -> list[tuple[str, list[str]]]:
     return groups
 
 
-def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None):
+def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
+                   single_period=False):
     """Expense report by type, grouped with subtotals."""
     hide_grid(ws)
     L = Layout(1)
-    title_band(ws, "Expense Report · by expense type",
-               f"Reporting month {period}  ·  with year to date  ·  \u20ac", L.last_col)
+    title_band(ws, "Expense Report · by expense type", meta_line(period, single_period), L.last_col)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
     dim, cat = R(GLC["expense_type"]), R(GLC["category"])
     act, bud = R(GLC["actual"]), R(GLC["budget"])
@@ -416,11 +429,11 @@ def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None):
 # ---------------------------------------------------------------------------
 # Departments & cost centres (hierarchy read from the data)
 # ---------------------------------------------------------------------------
-def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var, perno=None):
+def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var,
+                 perno=None, single_period=False):
     hide_grid(ws)
     L = Layout(1)
-    title_band(ws, "Departments & Cost Centres · spend variance",
-               f"Reporting month {period}  ·  with year to date  ·  \u20ac", L.last_col)
+    title_band(ws, "Departments & Cost Centres · spend variance", meta_line(period, single_period), L.last_col)
     headers(ws, 5, L.headers("Department / Cost centre"), center_from=2,
             center_to=L.ncols)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
@@ -487,11 +500,11 @@ def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var, perno=No
 # ---------------------------------------------------------------------------
 # Drivers
 # ---------------------------------------------------------------------------
-def _drivers(ws, agg, gl, glf, gll, GLC, period, var, perno=None):
+def _drivers(ws, agg, gl, glf, gll, GLC, period, var, perno=None,
+             single_period=False):
     hide_grid(ws)
     L = Layout(3)
-    title_band(ws, "Variance Drivers · account level",
-               f"Reporting month {period}  ·  with year to date  ·  \u20ac", L.last_col)
+    title_band(ws, "Variance Drivers · account level", meta_line(period, single_period), L.last_col)
     headers(ws, 5, L.headers("Account", "Account name", "Category"),
             center_from=4, center_to=L.ncols)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
@@ -610,13 +623,14 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
                 if v and v != "(multiple)"]
         if vals:
             _expense_sheet(wb.create_sheet("Expense Report"), _group_expense_types(vals),
-                           "GL Input", glf, gll, GLC, period, var, perno)
+                           "GL Input", glf, gll, GLC, period, var, perno,
+                           single_period)
             order.append("Expense Report")
     if "entity" in dims:
         vals = [v for v in month["entity"].unique() if v and v != "(multiple)"]
         if len(vals) > 1:
             _by_entity(wb.create_sheet("By Entity"), sorted(vals), "GL Input",
-                       glf, gll, GLC, period, var, perno)
+                       glf, gll, GLC, period, var, perno, single_period)
             order.append("By Entity")
     if "department" in dims:
         spend = month[month["category"] != "Revenue"]
@@ -629,10 +643,11 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
         if hierarchy:
             _departments(wb.create_sheet("Departments & CCs"), hierarchy, "GL Input",
                          glf, gll, GLC, period, has_cc and any(hierarchy.values()),
-                         var, perno)
+                         var, perno, single_period)
             order.append("Departments & CCs")
 
-    _drivers(wb.create_sheet("Drivers"), agg, "GL Input", glf, gll, GLC, period, var, perno)
+    _drivers(wb.create_sheet("Drivers"), agg, "GL Input", glf, gll, GLC, period,
+             var, perno, single_period)
     order += ["Drivers", "GL Input"]
     for i, name in enumerate(order):
         wb.move_sheet(name, -wb.sheetnames.index(name) + i)

@@ -251,3 +251,24 @@ LAYOUT_NOTE = (
     "and the full year projected at the current run rate. F/U judges the month "
     "variance; Flag names which timeframe clears both materiality floors."
 )
+
+
+def meta_line(period, single_period: bool = False) -> str:
+    """The right-hand line under the masthead, identical on every sheet.
+
+    Every sheet now reports the same three horizons, so every sheet names them
+    the same way. Three different phrasings were in use before - one sheet said
+    "with year to date", another "YTD & FY 2025", a third listed the run rate -
+    which read as three different reports.
+
+    "YTD 2025-06" on its own would be ambiguous: it does not say whether that is
+    the year through June or the month of June. Naming the window closes it.
+    """
+    text = str(period)
+    if len(text) != 7 or text[4] != "-" or not (text[:4] + text[5:]).isdigit():
+        # A file with no period column cannot be cut by time at all.
+        return "All periods in the file  \u00b7  \u20ac"
+    if single_period:
+        return f"Month {text}  \u00b7  single period in file  \u00b7  \u20ac"
+    return (f"Month {text}  \u00b7  YTD through {text}  \u00b7  FY {text[:4]}"
+            f"  \u00b7  \u20ac")

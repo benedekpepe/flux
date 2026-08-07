@@ -37,6 +37,7 @@ from ..engine import build_report
 from .styling import (
     FONT, GREEN_INK, RED_INK,
     F_HEAD, F_BODY, F_SMALL, F_SUB, F_INPUT, F_KPI_LABEL, F_KPI_VALUE, F_NOTE,
+    F_META,
     FILL_HEAD, FILL_IVORY, FILL_BAND, FILL_WHITE,
     CUR2, CUR_EUR, CUR2_EUR, PCT, RATE, KPI_DELTA, LCY_FORMATS,
     CENTER, LEFT, RIGHT, WRAP, indent, band_fill,
@@ -53,7 +54,7 @@ from .rows import (report_cf as _report_cf, write_sum_tail as _sum_tail,
 from .formulas import (
     Layout,
     LEVER_EUR, LEVER_PCT, LEVER_MONTHS, LEV_E, LEV_P, LEV_M,
-    DEFAULT_ABS_THRESHOLD, DEFAULT_PCT_THRESHOLD,
+    DEFAULT_ABS_THRESHOLD, DEFAULT_PCT_THRESHOLD, meta_line,
 )
 
 
@@ -255,8 +256,7 @@ def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report) -> N
     L = Layout(1)
     com = get_column_letter(L.ncols + 1)
     title_band(ws, "Management P&L · Variance Report (consolidated)",
-               f"Reporting month {period}  ·  with year to date and full-year run rate"
-               f"  ·  \u20ac", com)
+               meta_line(period), com)
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
     bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
     perno = int(period[:4]) * 100 + int(period[5:7])
@@ -275,6 +275,10 @@ def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report) -> N
     ws["M9"] = ("F/U judges the month variance; Flag names which timeframe "
                 "clears both floors.")
     ws["M9"].font = F_NOTE; ws["M9"].alignment = LEFT
+    # The KPI cards now run to row 8, so the lever row sits directly beneath
+    # them. A little more height is what keeps it from reading as a fourth line
+    # of the card.
+    ws.row_dimensions[9].height = 20
 
     headers(ws, 10, L.headers("") + ["Commentary"], center_from=2,
             center_to=L.ncols)
@@ -325,12 +329,18 @@ def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report) -> N
     _report_cf(ws, L, first, last, rows_higher, rows_lower)
 
     # ---- KPI cards ----
+    # The big number is the month, because that is what the sheet is titled, what
+    # F/U judges and what the commentary describes - a card that headlined a
+    # different timeframe from the table beneath it would be read as a third
+    # figure. But "how is the year going" is the next question, so the card
+    # answers it in place rather than making the reader scan across to the YTD
+    # block themselves.
     cards = [("REVENUE", "Revenue"), ("OPERATING INCOME (EBIT)", "Operating income (EBIT)"),
              ("NET INCOME", "Net income")]
     for (title, key), (c1, c2) in zip(cards, [(1, 3), (5, 7), (9, 11)]):
         lr = label_row[key]; fav = report[report["line"] == key].iloc[0]["fav_unfav"] == "F"
         Lc = get_column_letter(c1); Rt = get_column_letter(c2)
-        for rr in (5, 6, 7):
+        for rr in (5, 6, 7, 8):
             ws.merge_cells(f"{Lc}{rr}:{Rt}{rr}")
             for cc in range(c1, c2 + 1):
                 ws.cell(row=rr, column=cc).fill = FILL_IVORY
@@ -344,9 +354,15 @@ def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report) -> N
         ws[f"{Lc}7"].font = Font(name=FONT, size=9, bold=True,
                                  color=GREEN_INK if fav else RED_INK)
         ws[f"{Lc}7"].alignment = LEFT
-        outline(ws, 5, c1, 7, c2, GOLD_SIDE)
+        # Muted, and built as text: the YTD line is context for the month above
+        # it, so it must not compete with the green or red delta.
+        ws[f"{Lc}8"] = (f'="YTD  "&TEXT({L.yact}{lr},"#,##0")&" \u20ac"'
+                        f'&IF(ISNUMBER({L.ypct}{lr}),"  \u00b7  "'
+                        f'&TEXT({L.ypct}{lr},"+0.0%;-0.0%")&" vs budget","")')
+        ws[f"{Lc}8"].font = F_META; ws[f"{Lc}8"].alignment = LEFT
+        outline(ws, 5, c1, 8, c2, GOLD_SIDE)
     ws.row_dimensions[5].height = 18; ws.row_dimensions[6].height = 26
-    ws.row_dimensions[7].height = 16
+    ws.row_dimensions[7].height = 14; ws.row_dimensions[8].height = 14
 
     widths(ws, L.widths(26) + [COMMENT_WIDTH])
     quiet_indicators(ws, 5, last)
@@ -359,10 +375,11 @@ def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report) -> N
 def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
     hide_grid(ws)
     L = Layout(1)
-    # The fiscal year comes from the period, not a constant: hardcoded, this
-    # header still read "FY 2025" for a 2026 close.
-    title_band(ws, "Expense Report · by expense type",
-               f"Reporting month {period}  ·  YTD & FY {period[:4]}  ·  \u20ac",
+    # The meta line is built centrally, so the fiscal year follows the period
+    # rather than a constant: hardcoded, this header still read "FY 2025" for a
+    # 2026 close, and it phrased the same three horizons differently from the
+    # sheet next to it.
+    title_band(ws, "Expense Report · by expense type", meta_line(period),
                L.last_col)
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
     bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
@@ -452,8 +469,7 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None
     """
     hide_grid(ws)
     L = Layout(1)
-    title_band(ws, "By Entity · net income by legal entity",
-               f"Reporting month {period}  ·  with year to date  ·  \u20ac", L.last_col)
+    title_band(ws, "By Entity · net income by legal entity", meta_line(period), L.last_col)
     headers(ws, 5, L.headers("Entity"), center_from=2, center_to=L.ncols)
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
     bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
@@ -518,8 +534,7 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
     """Departmental spend variance with each department's cost centres nested."""
     hide_grid(ws)
     L = Layout(1)
-    title_band(ws, "Departments & Cost Centres · spend variance",
-               f"Reporting month {period}  ·  with year to date  ·  \u20ac", L.last_col)
+    title_band(ws, "Departments & Cost Centres · spend variance", meta_line(period), L.last_col)
     headers(ws, 5, L.headers("Department / Cost Centre"), center_from=2,
             center_to=L.ncols)
 
@@ -603,8 +618,7 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
 def _write_drivers(ws, agg, gl, glf, gll, bud, budf, budl, period) -> None:
     hide_grid(ws)
     L = Layout(3)
-    title_band(ws, "Variance Drivers · account level",
-               f"Reporting month {period}  ·  with year to date  ·  \u20ac", L.last_col)
+    title_band(ws, "Variance Drivers · account level", meta_line(period), L.last_col)
     headers(ws, 5, L.headers("Account", "Name", "Category"),
             center_from=4, center_to=L.ncols)
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"

@@ -54,7 +54,7 @@ automates.
 
 ## Screenshots
 
-**Management P&L — month, year to date and full-year run rate, with the pack's three lever cells**
+**Management P&L — the month headlined, the year to date beneath it, and the pack's three lever cells**
 
 ![Management P&L with month and YTD variances, the run rate against the full-year plan, F/U badges, materiality flags and per-line commentary](docs/pnl-report.png)
 
@@ -133,6 +133,16 @@ sheet points at them rather than holding its own copy:
 | `C9` | materiality floor, EUR |
 | `G9` | materiality floor, % |
 | `K9` | months elapsed, which drives every run rate in the pack |
+
+Every sheet also carries the same line under the masthead — `Month 2025-06 · YTD
+through 2025-06 · FY 2025 · €` — because every sheet now reports the same three
+horizons. "YTD 2025-06" on its own would not say whether that is the year through
+June or the month of June, so the window is named.
+
+The KPI cards headline the **month**, with the year to date muted beneath. The
+month is what the sheet is titled by, what F/U judges and what the commentary
+describes; a card that headlined a different timeframe from the table under it
+would read as a third figure rather than a summary of the first.
 
 Change one number and the whole pack re-flags or re-projects. That is enforced by
 the test suite, which reads the saved workbook back and checks that each sheet's
