@@ -477,8 +477,10 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None
     for col in "ABCDEFGH":
         ws[f"{col}{r}"].fill = FILL_IVORY; ws[f"{col}{r}"].border = SUBTOTAL_TOP
     ws.row_dimensions[r].height = 24
-    badge_cf(ws, f"H{first}:H{last}", None)
-    variance_cf(ws, f"F{first}:G{last}", f"$H{first}")
+    # Ranges run to `r`, the total row, not `last`: a total carries the same
+    # verdict as the lines above it and was being left uncoloured.
+    badge_cf(ws, f"H{first}:H{r}", None)
+    variance_cf(ws, f"F{first}:G{r}", f"$H{first}")
     widths(ws, [16, 15, 15, 15, 15, 14, 9, 6])
     quiet_indicators(ws, 5, last + 2)
     ws.freeze_panes = f"A{first}"
@@ -568,7 +570,7 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
         ws[f"{col}{r}"].border = TOTAL_TOP
     ws.row_dimensions[r].height = 24
 
-    badge_cf(ws, f"F{first}:F{last}", f"G{first}:G{last}")
+    badge_cf(ws, f"F{first}:F{r}", f"G{first}:G{r}")
     variance_cf(ws, f"D{first}:E{r}", f"$F{first}")
     ws.cell(row=r + 2, column=1,
             value="Departments are bold roll-ups; cost centres are indented beneath their "

@@ -358,10 +358,18 @@ def _dimension_sheet(ws, values, gl, glf, gll, L, period, title, first_header,
         cell = ws.cell(row=r, column=c); cell.fill = FILL_IVORY; cell.border = SUBTOTAL_TOP
     ws.row_dimensions[r].height = 24
 
-    flag_rng = None if revenue_split else (f"K{first}:K{last}" if ytd else f"G{first}:G{last}")
-    badge_cf(ws, f"{fu_col}{first}:{fu_col}{last}", flag_rng)
+    # Through `r`, the total row: it carries the same verdict as the lines above
+    # and was the one cell left without a badge.
+    flag_rng = None if revenue_split else (f"K{first}:K{r}" if ytd else f"G{first}:G{r}")
+    badge_cf(ws, f"{fu_col}{first}:{fu_col}{r}", flag_rng)
     if var:
-        variance_cf(ws, f"D{first}:E{last}", f"${fu_col}{first}")
+        # The variance sits in different columns per layout: F/G on the
+        # revenue-split sheet, D/E elsewhere, with a second YTD pair when the
+        # file spans months.
+        variance_cf(ws, f"F{first}:G{r}" if revenue_split else f"D{first}:E{r}",
+                    f"${fu_col}{first}")
+        if ytd and not revenue_split:
+            variance_cf(ws, f"H{first}:I{r}", f"${fu_col}{first}")
     widths(ws, [26, 15, 15, 15, 15, 14, 9, 6] if revenue_split
                 else [30, 13, 13, 12, 9, 13, 13, 12, 9, 6, 11] if ytd
                 else [30, 15, 15, 15, 10, 6, 11, 2])
@@ -567,7 +575,7 @@ def _departments(ws, hierarchy, gl, glf, gll, L, period, has_cc, var, perno=None
         cell = ws.cell(row=r, column=c); cell.fill = FILL_IVORY
         cell.border = TOTAL_TOP
     ws.row_dimensions[r].height = 24
-    badge_cf(ws, f"F{first}:F{last}", f"G{first}:G{last}")
+    badge_cf(ws, f"F{first}:F{r}", f"G{first}:G{r}")
     if var:
         variance_cf(ws, f"D{first}:E{r}", f"$F{first}")
     ws.cell(row=r + 2, column=1,
