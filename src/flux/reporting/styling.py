@@ -106,6 +106,32 @@ def band_fill(i: int) -> PatternFill:
     return FILL_BAND if i % 2 else FILL_WHITE
 
 
+def named_style(wb, name: str, *, font=None, fill=None, alignment=None,
+                number_format=None) -> str:
+    """Register a reusable cell style once and return its name.
+
+    Setting `font`, `fill`, `alignment` and `number_format` separately makes
+    openpyxl re-hash the style on each assignment, which on a sheet of five
+    thousand posting lines is the single largest cost in building the pack. A
+    named style collapses those four writes into one lookup.
+    """
+    from openpyxl.styles import NamedStyle
+
+    if name in wb.named_styles:
+        return name
+    style = NamedStyle(name=name)
+    if font is not None:
+        style.font = font
+    if fill is not None:
+        style.fill = fill
+    if alignment is not None:
+        style.alignment = alignment
+    if number_format is not None:
+        style.number_format = number_format
+    wb.add_named_style(style)
+    return name
+
+
 def wrapped_height(text, col_width: int, base: int = 26, per_line: int = 13) -> int:
     """Row height that fits `text` wrapped inside a column of `col_width`.
 

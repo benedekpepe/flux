@@ -40,6 +40,7 @@ from .styling import (
     CENTER, LEFT, RIGHT, WRAP, indent, band_fill,
     GOLD_SIDE, HEADER_BOTTOM, SUBTOTAL_TOP, TOTAL_TOP,
     hide_grid, title_band, headers, widths, outline, badge_cf, wrapped_height,
+    named_style,
     quiet_indicators, collect_quiet_ranges, suppress_error_indicators,
 )
 from .formulas import (
@@ -151,26 +152,52 @@ def _write_source_sheet(ws, df, spec, title, meta, footnote) -> tuple[int, int]:
     ws.row_dimensions[hrow].height = 22
 
     fmt_map = {"cur": CUR_EUR, "cur2": CUR2_EUR, "rate": RATE, "int": "0"}
+    wb = ws.parent
+
+    # Resolved names are memoised: openpyxl's `name in wb.named_styles` rebuilds
+    # the name list on every call, which at a quarter of a million cells costs
+    # more than the styling it was meant to save.
+    style_cache: dict[tuple, str] = {}
+
+    def style_for(fmt, banded, ccy="EUR"):
+        """One registered style per (format, band, currency) combination.
+
+        Roughly a dozen styles cover a sheet of any length, so the per-cell work
+        drops from four style writes to one dictionary hit.
+        """
+        cached = style_cache.get((fmt, banded, ccy))
+        if cached is not None:
+            return cached
+        suffix = "b" if banded else "w"
+        fill = FILL_BAND if banded else FILL_WHITE
+        if fmt == "lcy":
+            name = named_style(wb, f"flux_lcy_{ccy}_{suffix}", font=F_INPUT,
+                               fill=fill, alignment=RIGHT,
+                               number_format=LCY_FORMATS.get(ccy, CUR2))
+        elif fmt in ("cur", "cur2"):
+            name = named_style(wb, f"flux_{fmt}_{suffix}", font=F_INPUT, fill=fill,
+                               alignment=RIGHT, number_format=fmt_map[fmt])
+        elif fmt in ("rate", "int"):
+            name = named_style(wb, f"flux_{fmt}_{suffix}", font=F_SMALL, fill=fill,
+                               alignment=RIGHT, number_format=fmt_map[fmt])
+        else:
+            name = named_style(wb, f"flux_text_{suffix}", font=F_SMALL, fill=fill,
+                               alignment=LEFT)
+        style_cache[(fmt, banded, ccy)] = name
+        return name
+
     first = hrow + 1
-    for i, (_, row) in enumerate(df.iterrows()):
+    # Plain dicts: `row.get(key)` on a Series goes through pandas indexing on
+    # every cell, and there are a quarter of a million of them here.
+    for i, row in enumerate(df.to_dict("records")):
         r = first + i
-        band = band_fill(i)
+        banded = bool(i % 2)
         for c, (key, _h, _w, fmt) in enumerate(spec, start=1):
             v = row.get(key, "")
             if fmt in numeric and v != "":
                 v = float(v) if fmt != "int" else int(v)
             cell = ws.cell(row=r, column=c, value=v)
-            cell.fill = band
-            if fmt == "lcy":
-                ccy = str(row.get("currency", "EUR"))
-                cell.number_format = LCY_FORMATS.get(ccy, CUR2)
-                cell.font = F_INPUT; cell.alignment = RIGHT
-            elif fmt in ("cur", "cur2"):
-                cell.number_format = fmt_map[fmt]; cell.font = F_INPUT; cell.alignment = RIGHT
-            elif fmt in ("rate", "int"):
-                cell.number_format = fmt_map[fmt]; cell.font = F_SMALL; cell.alignment = RIGHT
-            else:
-                cell.font = F_SMALL; cell.alignment = LEFT
+            cell.style = style_for(fmt, banded, str(row.get("currency", "EUR")))
         ws.row_dimensions[r].height = 14
     last = first + len(df) - 1
 

@@ -10,6 +10,7 @@ Run:  streamlit run app.py
 
 import sys
 import tempfile
+import time
 from datetime import date
 from pathlib import Path
 
@@ -91,6 +92,30 @@ def _pnl_preview(std: pd.DataFrame, budgeted: bool = True):
     show = rep[cols].copy()
     show.columns = labels
     st.dataframe(show, width="stretch", hide_index=True)
+
+
+def _build(label: str, done: str, key: str, fn, out: Path):
+    """Run a pack build with visible progress and an honest summary.
+
+    The sample workbook takes a few seconds to write. Without this the button
+    click looks like nothing happened, and the natural response is to click it
+    again. The finished label reports the real size and elapsed time rather than
+    a generic tick, so the wait is accounted for.
+    """
+    with st.status(label, expanded=False) as status:
+        started = time.perf_counter()
+        try:
+            fn(out)
+        except Exception as exc:  # surfaced, not swallowed into a dead button
+            status.update(label=f"Could not build the {done.lower()}", state="error")
+            st.error(f"{type(exc).__name__}: {exc}")
+            return
+        size_kb = out.stat().st_size / 1024
+        elapsed = time.perf_counter() - started
+        size = f"{size_kb / 1024:,.1f} MB" if size_kb >= 1024 else f"{size_kb:,.0f} KB"
+        status.update(label=f"{done} ready — {size} in {elapsed:.1f}s",
+                      state="complete")
+    _offer_download(out, "", key)
 
 
 def _offer_download(path: Path, label: str, key: str):
@@ -262,13 +287,18 @@ with tab_upload:
             )
             gen_x, gen_p = st.columns(2)
             if gen_x.button("Generate Excel pack", type="primary", width="stretch"):
-                out = Path(tempfile.gettempdir()) / "flux_pack.xlsx"
-                build_client_pack(std, active, out, budgeted=budgeted)
-                _offer_download(out, "Download flux_pack.xlsx", "pack_upload")
+                with gen_x:
+                    _build("Writing the workbook — live formulas over your ledger…",
+                           "Excel pack", "pack_upload",
+                           lambda o: build_client_pack(std, active, o,
+                                                       budgeted=budgeted),
+                           Path(tempfile.gettempdir()) / "flux_pack.xlsx")
             if gen_p.button("Generate PowerPoint deck", width="stretch"):
-                out = Path(tempfile.gettempdir()) / "flux_management_pack.pptx"
-                build_pptx_pack(preview, active, out, budgeted=budgeted)
-                _offer_download(out, "Download deck", "deck_upload")
+                with gen_p:
+                    _build("Building the slides…", "Deck", "deck_upload",
+                           lambda o: build_pptx_pack(preview, active, o,
+                                                     budgeted=budgeted),
+                           Path(tempfile.gettempdir()) / "flux_management_pack.pptx")
             with gen_x:
                 _render_download("pack_upload", "Download flux_pack.xlsx")
             with gen_p:
@@ -287,14 +317,17 @@ with tab_sample:
     _pnl_preview(sample, True)
     col_x, col_p = st.columns(2)
     if col_x.button("Generate Excel pack", type="primary", width="stretch"):
-        out = Path(tempfile.gettempdir()) / "flux_sample_pack.xlsx"
-        build_demo_pack(SAMPLE_PERIOD, out)
-        _offer_download(out, "Download flux_sample_pack.xlsx", "pack_sample")
+        with col_x:
+            _build("Generating the ledger and writing seven sheets…",
+                   "Excel pack", "pack_sample",
+                   lambda o: build_demo_pack(SAMPLE_PERIOD, o),
+                   Path(tempfile.gettempdir()) / "flux_sample_pack.xlsx")
     if col_p.button("Generate PowerPoint deck", width="stretch"):
-        out = Path(tempfile.gettempdir()) / "flux_sample_deck.pptx"
-        build_pptx_pack(sample, SAMPLE_PERIOD, out,
-                        detail=monthly_detail(SAMPLE_PERIOD))
-        _offer_download(out, "Download flux_sample_deck.pptx", "deck_sample")
+        with col_p:
+            _build("Building the slides…", "Deck", "deck_sample",
+                   lambda o: build_pptx_pack(sample, SAMPLE_PERIOD, o,
+                                             detail=monthly_detail(SAMPLE_PERIOD)),
+                   Path(tempfile.gettempdir()) / "flux_sample_deck.pptx")
     with col_x:
         _render_download("pack_sample", "Download flux_sample_pack.xlsx")
     with col_p:
