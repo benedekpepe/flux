@@ -43,10 +43,11 @@ st.set_page_config(
 st.logo(str(ASSETS / "flux-logo.svg"), icon_image=str(ASSETS / "flux-mark.svg"),
         size="large")
 
-# The page heading uses the theme's primary colour rather than a hardcoded navy,
-# so it stays legible in dark mode. See .streamlit/config.toml.
-st.title(":primary[Flux]")
-st.caption("Automated management reporting — turn a general ledger into a variance pack.")
+# No page heading: the lockup in the chrome already carries the name, and
+# repeating it in the body set it twice in two different styles.
+st.subheader("Automated management reporting")
+st.caption("Turn a general ledger into a management P&L with variance analysis, "
+           "favourable / unfavourable classification and materiality flagging.")
 
 SAMPLE_PERIOD = "2025-06"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
