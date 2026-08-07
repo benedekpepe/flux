@@ -135,6 +135,13 @@ sheet points at them rather than holding its own copy:
 | `G9` | materiality floor, % |
 | `K9` | months elapsed, which drives every run rate in the pack |
 
+Months elapsed is **counted from the data** — the number of months that actually
+carry postings up to the reporting month — not read off the reporting month's
+number. An extract that starts in March still reports June as month six, and
+dividing a four-month year to date by six would understate every projection in
+the pack by a third. It stays editable, because only the reader knows whether a
+gap is a quiet month or a missing export.
+
 Every sheet also carries the same line under the masthead — `Month 2025-06 · YTD
 through 2025-06 · FY 2025 · €` — because every sheet now reports the same three
 horizons. "YTD 2025-06" on its own would not say whether that is the year through
@@ -325,7 +332,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 177 checks` means everything is wired up correctly.
+`PASSED all 178 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -386,7 +393,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**177 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**178 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

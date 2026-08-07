@@ -243,7 +243,8 @@ def _write_budget(ws, bud, period) -> tuple[int, int]:
 # ===========================================================================
 # P&L Report
 # ===========================================================================
-def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report) -> None:
+def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report,
+               months) -> None:
     """The management P&L, and the sheet that owns the pack's three levers.
 
     Month against budget answers what happened; year to date answers whether it
@@ -270,7 +271,10 @@ def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report) -> N
           DEFAULT_ABS_THRESHOLD, CUR_EUR)
     lever(ws, "E9:F9", "Materiality floor (%)", LEVER_PCT,
           DEFAULT_PCT_THRESHOLD, PCT)
-    lever(ws, "I9:J9", "Months elapsed", LEVER_MONTHS, int(period[5:7]), "0")
+    # Counted from the ledger rather than read off the reporting month: an
+    # extract that starts in March still reports June as month six, and dividing
+    # a four-month year to date by six understates every run rate in the pack.
+    lever(ws, "I9:J9", "Months elapsed", LEVER_MONTHS, months, "0")
     ws.merge_cells(f"M9:{com}9")
     ws["M9"] = ("F/U judges the month variance; Flag names which timeframe "
                 "clears both floors.")
@@ -707,7 +711,10 @@ def build_demo_pack(period: str, out_path: str | Path, seed: int = 42) -> Path:
     ws_bud = wb.create_sheet("Budget"); budf, budl = _write_budget(ws_bud, bud, period)
 
     GL, BUD = "GL Transactions", "Budget"
-    _write_pnl(wb.create_sheet("P&L Report"), GL, glf, gll, BUD, budf, budl, period, comments, report)
+    months = txns.loc[txns["period_no"] <= int(period[:4]) * 100 + int(period[5:7]),
+                      "period_no"].nunique() or 1
+    _write_pnl(wb.create_sheet("P&L Report"), GL, glf, gll, BUD, budf, budl,
+               period, comments, report, months)
     _write_expense_report(wb.create_sheet("Expense Report"), GL, glf, gll, BUD, budf, budl, period)
     _write_by_entity(wb.create_sheet("By Entity"), ent_var, GL, glf, gll, BUD, budf, budl, period)
     _write_cost_centres(wb.create_sheet("Departments & CCs"), dept_var, GL, glf, gll, BUD, budf, budl, period)

@@ -130,8 +130,24 @@ def _filters(R, GLC, perno):
     return "", ""
 
 
-def _months_elapsed(period: str | None) -> int:
-    """The default for the months lever, read off the reporting period."""
+def _months_elapsed(agg, period, perno) -> int:
+    """How many months the year-to-date figures actually cover.
+
+    Counted from the data, not read off the reporting month. An extract that
+    starts in March still reports June as month six, and dividing a four-month
+    year to date by six understates every run rate in the pack by a third - a
+    quiet, plausible-looking error, which is the worst kind.
+
+    Months with no postings at all do not count: the run rate assumes the rest
+    of the year behaves like the year so far, and a month nobody traded in is
+    not part of the year so far. A reader who knows the gap is a missing export
+    rather than a quiet month can say so by editing the lever.
+    """
+    if perno and "period_no" in getattr(agg, "columns", []):
+        actuals = pd.to_numeric(agg["actual"], errors="coerce").fillna(0)
+        posted = agg.loc[(actuals != 0) & (agg["period_no"] <= perno), "period_no"]
+        if posted.nunique():
+            return int(posted.nunique())
     try:
         return int(str(period)[5:7])
     except (TypeError, ValueError):
@@ -142,7 +158,7 @@ def _months_elapsed(period: str | None) -> int:
 # P&L
 # ---------------------------------------------------------------------------
 def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
-         single_period=False):
+         single_period=False, months=1):
     """The management P&L, and the sheet that owns the pack's lever cells.
 
     Prior-year actuals are not on this sheet: a front page has room for one
@@ -168,8 +184,7 @@ def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
               DEFAULT_ABS_THRESHOLD, CUR_EUR)
         lever(ws, "E9:F9", "Materiality floor (%)", LEVER_PCT,
               DEFAULT_PCT_THRESHOLD, PCT)
-    lever(ws, "I9:J9", "Months elapsed", LEVER_MONTHS,
-          _months_elapsed(period), "0")
+    lever(ws, "I9:J9", "Months elapsed", LEVER_MONTHS, months, "0")
     ws.merge_cells(f"M9:{com}9")
     ws["M9"] = ("F/U judges the month variance; Flag names which timeframe "
                 "clears both floors.")
@@ -631,8 +646,9 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
     wb = Workbook()
     ws_gl = wb.active; ws_gl.title = "GL Input"
     glf, gll, GLC = _gl_input(ws_gl, agg, period, gl_dims, budgeted)
+    months = _months_elapsed(agg, period, perno)
     _pnl(wb.create_sheet("P&L Report"), "GL Input", glf, gll, GLC, period,
-         comments, report, var, perno, single_period)
+         comments, report, var, perno, single_period, months)
 
     order = ["P&L Report"]
     if "expense_type" in dims:

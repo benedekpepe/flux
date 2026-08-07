@@ -642,6 +642,25 @@ def test_workbooks() -> None:
     check("Var to FY is left empty without a full-year plan",
           pnl["L11"].value in (None, ""), str(pnl["L11"].value))
 
+    # A file that starts mid-year: the year to date covers four months, so the
+    # run rate must divide by four. Reading the month count off the reporting
+    # period instead would understate every projection in the pack by a third.
+    gappy = agg.copy()
+    gappy["period"] = PERIOD
+    gappy["period_no"] = ingest.period_key(PERIOD)
+    earlier = []
+    for p in ("2025-03", "2025-04", "2025-05"):
+        block = agg.copy()
+        block["period"] = p
+        block["period_no"] = ingest.period_key(p)
+        earlier.append(block)
+    gappy = pd.concat(earlier + [gappy], ignore_index=True)
+    part = build_client_pack(gappy, PERIOD, tmp / "gappy.xlsx")
+    wbg = _load(part)
+    check("Months elapsed counts the months with postings, not the month number",
+          wbg["P&L Report"]["K9"].value == 4,
+          str(wbg["P&L Report"]["K9"].value))
+
     rep_nb = build_report(actuals)
     check("The engine reports nothing material without a budget",
           not rep_nb["material"].any())
