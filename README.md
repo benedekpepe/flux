@@ -2,6 +2,9 @@
 
 [![CI](https://github.com/benedekpepe/flux/actions/workflows/ci.yml/badge.svg)](https://github.com/benedekpepe/flux/actions/workflows/ci.yml)
 
+**Live demo: https://flux-reporting.streamlit.app/** — open the *Use sample data*
+tab to generate the full pack with no sign-up, or upload your own ledger.
+
 A management reporting engine that turns a general ledger into a **management
 P&L with variance analysis** — budget and prior-year variances, favourable /
 unfavourable classification, materiality flagging, and consolidation by legal
@@ -231,7 +234,9 @@ streamlit run app.py
 ```
 
 Open the **Use sample data** tab to see the full pack immediately, or upload your
-own GL on the first tab.
+own GL on the first tab. The hosted version at
+[flux-reporting.streamlit.app](https://flux-reporting.streamlit.app/) runs the
+same code if you would rather not install anything.
 
 The app follows your system light/dark preference. Both palettes are built from
 the same navy, brass and ivory the Excel packs use, so the app and the workbook
@@ -320,7 +325,7 @@ every green run leaves a downloadable workbook.
 - [x] Streamlit app: upload, confirm mapping, download the pack.
 - [x] Accounting sign conventions and the actuals-only path.
 - [x] Verification suite and CI.
-- [ ] Public deploy (Streamlit Community Cloud).
+- [x] Public deploy (Streamlit Community Cloud).
 - [ ] PowerPoint management pack (python-pptx).
 - [ ] Next.js front end for upload and interactive review.
 - [ ] Historical storage and period-over-period trending (PostgreSQL).
