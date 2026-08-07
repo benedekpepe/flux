@@ -349,6 +349,45 @@ def test_ingestion() -> None:
     check("The report says which reading was followed",
           any("the code was followed" in i for i in reported), str(reported))
 
+    # A real export is a printed report: a title block, a subtotal after each
+    # group, a grand total and a footer. Read as data, the subtotal rows count
+    # the whole ledger twice, quietly, while the pack still looks finished.
+    printed = pd.DataFrame({
+        "Szamla": ["911", "5111", "5411", "", "Keszult: 2025.07.02"],
+        "Megnevezes": ["Belfoldi ertekesites arbevetele", "Anyagkoltseg",
+                       "Berkoltseg", "Osszesen", ""],
+        "Tartozik": [0, 4_200_000, 5_100_000, 9_300_000, 0],
+        "Kovetel": [12_000_000, 0, 0, 12_000_000, 0],
+    })
+    pstd, _report, pissues = ingest.ingest(printed)
+    check("A grand-total row is not read as an account",
+          len(pstd) == 3, f"{len(pstd)} rows: {list(pstd['account_name'])}")
+    check("Dropping the total row is reported, never silent",
+          any("total rows were left out" in i for i in pissues), str(pissues))
+    check("A footer line is not read as an account",
+          "Keszult: 2025.07.02" not in list(pstd["account_code"]))
+    prep = build_report(pstd)
+    check("The printed report's revenue survives the debit/credit convention",
+          close(line(prep, "Revenue").actual, 12_000_000),
+          str(line(prep, "Revenue").actual))
+    check("A single credit-balance revenue account is still normalised",
+          any("credit balance" in i for i in pissues), str(pissues))
+    check("The result is the one the ledger actually shows",
+          close(line(prep, "Net income").actual, 2_700_000),
+          str(line(prep, "Net income").actual))
+
+    # An account legitimately named after a total word must survive, or the
+    # filter is worse than the problem it fixes.
+    real = pd.DataFrame({
+        "Account": ["4000", "6500", "6600"],
+        "Account name": ["Product revenue", "Net interest expense",
+                         "Gross margin adjustment"],
+        "Actual": [500_000.0, 12_000.0, 8_000.0],
+    })
+    rstd, _r2, _i2 = ingest.ingest(real)
+    check("A coded account named after a total word is kept",
+          len(rstd) == 3, f"{len(rstd)}: {list(rstd['account_name'])}")
+
     # A document number must never be read as an amount.
     docnum = pd.DataFrame({
         "Account": ["4000", "5000", "6110", "6300", "6310", "6320"],

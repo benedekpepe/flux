@@ -209,6 +209,21 @@ and flag all of them. The run rate is the exception: it is built from actuals an
 the months lever alone, so it still projects. Prior-year actuals are carried on
 the GL Input sheet, beside the figures they belong to.
 
+## A real export is a printed report, not a table
+
+An export carries a title block, blank lines, a subtotal after each group, a
+grand total at the bottom and a "printed on" footer. Read as data, **the subtotal
+rows count the whole ledger twice** — quietly, because the pack still builds and
+still looks finished.
+
+So rows that name a total rather than an account are left out, and so are rows
+with no amount in any column. Both are reported: a row silently dropped changes
+the totals as surely as a subtotal silently counted.
+
+The filter wants two signals before discarding a row that has a real account
+code, because a chart of accounts legitimately holds *Net interest expense* and
+*Gross margin adjustment*. A row with no code needs only the word.
+
 ## Reading a chart of accounts it has never seen
 
 The account code alone cannot say what a line is. `5` opens material cost in a
@@ -415,7 +430,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 233 checks` means everything is wired up correctly.
+`PASSED all 240 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -476,7 +491,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**233 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**240 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

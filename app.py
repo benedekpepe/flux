@@ -246,6 +246,10 @@ with tab_upload:
             st.warning(f"Still need a column for: {', '.join(missing)}")
         else:
             std = apply_mapping(raw, final)
+            # A row silently dropped changes the totals as surely as a subtotal
+            # silently counted, so both are said out loud.
+            for note in std.attrs.get("dropped_rows", []):
+                st.info(note)
             # The classification step only exists when there was something to
             # classify, so the steps after it are numbered from what came before.
             step = 3

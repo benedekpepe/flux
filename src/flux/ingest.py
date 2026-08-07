@@ -735,10 +735,17 @@ def normalise_signs(std: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         for col in money:
             vals = pd.to_numeric(rows[col], errors="coerce").fillna(0.0)
             nonzero = vals[vals != 0]
-            if len(nonzero) < 2 or vals.sum() >= 0:
+            if not len(nonzero) or vals.sum() >= 0:
+                continue
+            # Two lines are wanted before a pattern is called a convention -
+            # except on revenue. A ledger credits revenue, so a single revenue
+            # account arriving negative is the convention, not a credit note,
+            # and a small company has exactly one. Requiring two lines there
+            # left revenue negative and the whole result inverted.
+            if len(nonzero) < 2 and category != "Revenue":
                 continue
             # Consistently negative, not one odd credit among positives.
-            if (nonzero < 0).mean() < 0.7:
+            if len(nonzero) >= 2 and (nonzero < 0).mean() < 0.7:
                 continue
             out.loc[rows.index, col] = -vals
             notes.append(
@@ -746,6 +753,82 @@ def normalise_signs(std: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
                 "normalised so the line reports as a positive magnitude."
             )
     return out, notes
+
+
+# ---------------------------------------------------------------------------
+# Rows that are not accounts
+# ---------------------------------------------------------------------------
+# A real export is a printed report, not a table. It carries a title block, a
+# blank line or two, a subtotal row after each group, a grand total at the
+# bottom and a "printed on" footer. Read as data, the subtotal rows count the
+# whole ledger twice - quietly, because the pack still builds and still looks
+# finished. That is the failure this exists to stop.
+
+#: Words that name a total rather than an account, folded and accent-free.
+TOTAL_WORDS = (
+    "osszesen", "mindosszesen", "vegosszeg", "egyenleg", "forgalom",
+    "total", "subtotal", "sub-total", "grand total", "sum", "summe",
+    "gesamt", "zwischensumme", "saldo", "balance", "net", "gross",
+)
+
+
+def _looks_like_total(name: str, code: str) -> bool:
+    """True when a row names a total rather than an account.
+
+    Two signals are wanted before a row with a real account code is discarded:
+    a chart of accounts may legitimately hold "Net interest" or "Gross margin",
+    and dropping a real account is as bad as keeping a subtotal. A row with no
+    code needs only the word.
+    """
+    text = _fold(name).strip(" .:-\t")
+    coded = any(ch.isdigit() for ch in str(code))
+    if not text:
+        return False
+    if text in TOTAL_WORDS:
+        return True
+    hit = any(text.startswith(w + " ") or text.endswith(" " + w)
+              for w in TOTAL_WORDS)
+    return hit and not coded
+
+
+def drop_non_account_rows(out: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Remove the printed furniture an export carries around its data.
+
+    Returns the frame and a note for every kind of row removed, because a row
+    silently dropped is the mirror image of a subtotal silently counted: both
+    change the totals and neither shows up on the face of the pack.
+    """
+    if out.empty:
+        return out, []
+
+    money = [c for c in ("actual", "budget", "prior_year") if c in out.columns]
+    amounts = out[money].fillna(0.0) if money else None
+    notes: list[str] = []
+
+    totals = out.apply(
+        lambda r: _looks_like_total(r.get("account_name", ""),
+                                    r.get("account_code", "")), axis=1)
+    if totals.any():
+        named = [str(n).strip() for n in out.loc[totals, "account_name"].head(4)]
+        notes.append(
+            f"{int(totals.sum())} subtotal or total rows were left out of the "
+            f"data ({'; '.join(named)}"
+            f"{' and others' if int(totals.sum()) > 4 else ''}). Counting them "
+            "as accounts would report the ledger twice."
+        )
+
+    # A row with nothing in any amount column contributes nothing to a report,
+    # and it is what a title line or a footer looks like once it has been read
+    # into a table.
+    empty = amounts.eq(0).all(axis=1) if amounts is not None else pd.Series(
+        False, index=out.index)
+    empty = empty & ~totals
+    if empty.any():
+        notes.append(f"{int(empty.sum())} rows carried no amount in any column "
+                     "and were left out.")
+
+    kept = out[~(totals | empty)]
+    return kept.reset_index(drop=True), notes
 
 
 def apply_mapping(df: pd.DataFrame, matches: list[ColMatch]) -> pd.DataFrame:
@@ -785,17 +868,6 @@ def apply_mapping(df: pd.DataFrame, matches: list[ColMatch]) -> pd.DataFrame:
     if "category" in src:
         out["category"] = df[src["category"]].astype(str).str.strip().str.title()
         out["category"] = out["category"].replace({"Cogs": "COGS", "Opex": "OpEx"})
-    else:
-        # Both readings, code and name, and a record of which one was trusted -
-        # kept on the frame so `ingest` can put the guess in front of the user.
-        cats, info = infer_categories(out["account_code"], out["account_name"])
-        out["category"] = cats
-        out.attrs["category_inference"] = info
-    if "expense_type" not in src:
-        etypes, einfo = infer_expense_types(out["account_name"], out["category"])
-        if einfo["recognised"]:
-            out["expense_type"] = etypes
-            out.attrs["expense_type_inference"] = einfo
     for opt in ("period", "expense_type", "department", "cost_centre", "entity"):
         if opt in src:
             col = df[src[opt]]
@@ -804,6 +876,25 @@ def apply_mapping(df: pd.DataFrame, matches: list[ColMatch]) -> pd.DataFrame:
 
     out = out.dropna(subset=["actual", "budget"], how="all")
     out[["actual", "budget", "prior_year"]] = out[["actual", "budget", "prior_year"]].fillna(0.0)
+    # Done here rather than in `ingest`, because the app maps columns itself and
+    # would otherwise never see it - the same gap the classification notes fell
+    # through.
+    out, dropped = drop_non_account_rows(out)
+    if dropped:
+        out.attrs["dropped_rows"] = dropped
+
+    # Classification runs last, on the rows that survived. Inferring first meant
+    # a chart style scored against subtotal rows and a footer, and an
+    # expense-type count that included both.
+    if "category" not in src:
+        cats, info = infer_categories(out["account_code"], out["account_name"])
+        out["category"] = cats
+        out.attrs["category_inference"] = info
+    if "expense_type" not in src:
+        etypes, einfo = infer_expense_types(out["account_name"], out["category"])
+        if einfo["recognised"]:
+            out["expense_type"] = etypes
+            out.attrs["expense_type_inference"] = einfo
     return out.reset_index(drop=True)
 
 
@@ -981,6 +1072,7 @@ def ingest(source, overrides: dict | None = None, use_llm: bool | None = None):
         # An unread chart of accounts produces a finished-looking pack with the
         # bottom line inverted, so the classification is reported whether it went
         # well or badly - it is the one guess the user cannot check by eye.
+        issues.extend(std.attrs.get("dropped_rows", []))
         cat_info = std.attrs.get("category_inference")
         if cat_info:
             issues.extend(category_issues(list(std["account_code"]),
