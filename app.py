@@ -128,6 +128,10 @@ with tab_upload:
             type=["csv", "xlsx", "xls"], accept_multiple_files=False, key="up_budget",
         )
     with col_b:
+        # A label of its own, rather than an invisible spacer: the left column
+        # starts with the uploader's label, so without one the button sat half a
+        # line high. It also gives the button a name it was missing.
+        st.markdown("Input template")
         tpath = Path(__file__).parent / "data" / "input_template.xlsx"
         if tpath.exists():
             st.download_button(
