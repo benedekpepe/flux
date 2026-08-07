@@ -460,8 +460,11 @@ def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
         for i, et in enumerate(types):
             write_line(r, et)
             _tail(ws, L, r, higher=False, bold=single, var=var)
+            # A group holding one type is drawn as the group row, so it is a
+            # roll-up on the sheet and gets the group's comment.
             dress(r, et, bold=single, fill=FILL_IVORY if single else band_fill(i),
-                  border=single, level=0 if single else 1)
+                  border=single, level=0 if single else 1,
+                  note_text=comments.get(gname, "") if single else "")
             type_rows.append(r); all_rows.append(r); r += 1
         if single:
             group_rows.append(type_rows[0])

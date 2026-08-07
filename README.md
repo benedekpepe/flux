@@ -270,6 +270,10 @@ which is not on the row. On a leaf row the comment could only restate the
 variance and percentage in the columns beside it, so the Drivers sheet and the
 cost-centre lines carry none.
 
+A group holding a single line counts as a roll-up too — it is drawn as the group
+row, so a blank comment beside its filled neighbours reads as a gap. Only the
+"driven by" clause is dropped there, because it would name the row itself.
+
 Grand totals count as roll-ups: they have the whole sheet underneath them and
 are the row a reader looks at first. A spend sheet's total comment is built on a
 revenue-free frame, matching the figures on the row — otherwise it agrees with
@@ -362,7 +366,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 197 checks` means everything is wired up correctly.
+`PASSED all 205 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -423,7 +427,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**197 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**205 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

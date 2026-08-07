@@ -419,8 +419,14 @@ def rollup_comments(
         y_parents = y_children = None
 
     def movers(frame, key):
+        rows = frame[frame[parent] == key]
+        if len(rows) < 2:
+            # A roll-up over one line has nothing to attribute: naming the
+            # mover would name the row itself. The variance sentences still
+            # apply, so the comment is written - just without this clause.
+            return ""
         named = []
-        for _, c in frame[frame[parent] == key].iterrows():
+        for _, c in rows.iterrows():
             cvar = c["actual"] - c["budget"]
             _cpct, cfu, cmaterial = verdict(cvar, c["budget"])
             if cmaterial:

@@ -607,6 +607,32 @@ def test_workbooks() -> None:
             leaf = ws.cell(row=leaf_row, column=ws.max_column).value
             check(f"Demo pack: '{name}' leaves its leaf rows uncommented",
                   leaf in (None, ""), str(leaf)[:60])
+    # Every group row on the expense report is a roll-up, including the two
+    # groups holding a single expense type: they are drawn as group rows, so a
+    # blank comment beside three filled ones reads as a gap.
+    exp = wb["Expense Report"]
+    # A group holding one type is labelled with the type's name, not the
+    # group's: "Financing" is drawn as "Financing & bank".
+    label_of_group = {name: (types[0] if len(types) == 1 else name)
+                      for name, types in EXPENSE_GROUPS}
+    group_names = set(label_of_group.values())
+    found = 0
+    for r in range(6, exp.max_row + 1):
+        label = str(exp.cell(row=r, column=1).value or "").strip()
+        if label not in group_names:
+            continue
+        found += 1
+        text = exp.cell(row=r, column=exp.max_column).value or ""
+        check(f"Demo pack: expense group '{label}' carries a comment",
+              text.startswith("YTD"), text[:60])
+        # A group over one line must not attribute the movement to itself.
+        singles = [t for n, t in EXPENSE_GROUPS if label_of_group[n] == label][0]
+        if len(singles) == 1:
+            check(f"Demo pack: '{label}' does not name itself as its own driver",
+                  "Driven by" not in text, text[:80])
+    check("Demo pack: every expense group was checked",
+          found == len(EXPENSE_GROUPS), f"{found} of {len(EXPENSE_GROUPS)}")
+
     # The grand total is a roll-up over the whole sheet, and the row a reader
     # looks at first. It was the one blank cell in a commented column.
     for name, label in (("Expense Report", "Total expenses"),

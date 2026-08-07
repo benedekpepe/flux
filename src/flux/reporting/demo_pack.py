@@ -486,7 +486,14 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period,
                 cell = ws[f"{col}{r}"]; cell.fill = band
                 if single:
                     cell.border = SUBTOTAL_TOP
-            ws.row_dimensions[r].height = 21 if single else 18
+            # A group holding one type is drawn as the group row, so it is a
+            # roll-up on the sheet and gets the group's comment. Only the
+            # "driven by" clause is dropped, because it would name this row.
+            note_text = comments.get(group_name, "") if single else ""
+            kc = ws[f"{com}{r}"]; kc.value = note_text
+            kc.font = F_SUB if single else F_BODY; kc.alignment = WRAP
+            ws.row_dimensions[r].height = max(
+                21 if single else 18, wrapped_height(note_text, COMMENT_WIDTH))
             type_rows.append(r); all_rows.append(r)
             i += 1; r += 1
 
