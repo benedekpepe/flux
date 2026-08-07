@@ -22,3 +22,16 @@ textColor = "#E8EAEE"
 
 [server]
 maxUploadSize = 50
+
+# Streamlit's source watcher deletes the modules it tracks from `sys.modules` on
+# every reload, and does it without a lock. When a rerun starts before the purge
+# finishes, an import lands on a half-emptied `sys.modules` and dies with
+# `KeyError: 'flux.coa'` - or, worse, somewhere deep in the import machinery that
+# names neither the module nor the cause. Upstream: streamlit/streamlit#1430,
+# #1644 and #6404.
+#
+# `flux` is a library the app imports, not app code: it is not edited between
+# reruns, so nothing is lost by taking it out of the watcher's hands. The cost is
+# local only - editing a file under src/ no longer triggers a hot reload, so
+# restart the server after changing the engine.
+folderWatchBlacklist = ["src"]
