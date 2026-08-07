@@ -1,24 +1,45 @@
 """
-Excel reporting layer.
+Flux - management reporting engine.
 
-    styling       palette, type, number formats, sheet chrome
-    formulas      Excel formula builders, the lever cells and the column layout
-    rows          the report row every sheet writes the same way
-    demo_pack     the full multi-entity showcase, from generated data
-    client_pack   the pack built from an ingested client file
-    pptx_pack     the management deck: the same numbers, seven slides
+Turns a general ledger into a management-ready P&L with budget and prior-year
+variance analysis, favourable/unfavourable classification, materiality flagging
+and consolidation by legal entity, department and cost centre.
 
-Both packs write live formulas over an input sheet rather than static values, so
-an edited input recalculates the whole workbook. Every reporting sheet in either
-pack carries the same columns, built by `rows` from the layout in `formulas`, so
-the two packs cannot report the same figures two different ways.
+Layers:
+    coa             chart of accounts, org hierarchy, P&L structure
+    engine          variance computation and materiality
+    commentary      narrative generation from the engine output
+    ingest          arbitrary client files -> the internal schema
+    synthetic_data  seeded generator for the demo company
+    reporting       Excel packs (live formulas), styling and formula helpers
 """
 
 from __future__ import annotations
 
-from .demo_pack import build_demo_pack, demo_analysis_blocks
-from .client_pack import build_client_pack
-from .pptx_pack import build_pptx_pack
+__version__ = "0.5.0"
+__author__ = "Benedek Péter - B.P. Studio"
 
-__all__ = ["build_demo_pack", "build_client_pack", "build_pptx_pack",
-           "demo_analysis_blocks"]
+from .coa import CHART_OF_ACCOUNTS, PNL_STRUCTURE
+from .engine import (
+    MaterialityRule,
+    build_report,
+    leaf_variances,
+    department_variances,
+    cost_centre_variances,
+    entity_variances,
+)
+from .commentary import generate_commentary, line_comments
+
+__all__ = [
+    "CHART_OF_ACCOUNTS",
+    "PNL_STRUCTURE",
+    "MaterialityRule",
+    "build_report",
+    "leaf_variances",
+    "department_variances",
+    "cost_centre_variances",
+    "entity_variances",
+    "generate_commentary",
+    "line_comments",
+    "__version__",
+]

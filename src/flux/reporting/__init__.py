@@ -16,8 +16,9 @@ the two packs cannot report the same figures two different ways.
 
 from __future__ import annotations
 
-from .demo_pack import build_demo_pack
+from .demo_pack import build_demo_pack, demo_analysis_blocks
 from .client_pack import build_client_pack
 from .pptx_pack import build_pptx_pack
 
-__all__ = ["build_demo_pack", "build_client_pack", "build_pptx_pack"]
+__all__ = ["build_demo_pack", "build_client_pack", "build_pptx_pack",
+           "demo_analysis_blocks"]
