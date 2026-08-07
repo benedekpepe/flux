@@ -432,6 +432,74 @@ def _load(path: Path):
         return load_workbook(path)
 
 
+def _cf_cells(ws) -> set[str]:
+    """Every cell coordinate covered by a conditional-formatting range.
+
+    Coordinates, not row numbers: a rule over the variance columns covering a
+    row says nothing about whether the F/U badge beside it is covered too, and
+    unioning the ranges lets one hide the other's gap.
+    """
+    from openpyxl.utils import get_column_letter
+    from openpyxl.utils.cell import range_boundaries
+
+    covered: set[str] = set()
+    for rng in ws.conditional_formatting:
+        for part in str(rng.sqref).split():
+            c1, r1, c2, r2 = range_boundaries(part)
+            for col in range(c1, c2 + 1):
+                for row in range(r1, r2 + 1):
+                    covered.add(f"{get_column_letter(col)}{row}")
+    return covered
+
+
+def _header_columns(ws) -> dict:
+    """Map header label to column letter, for whichever row holds the headers."""
+    from openpyxl.utils import get_column_letter
+
+    for header_row in (5, 10):
+        found = {}
+        for col in range(1, ws.max_column + 1):
+            value = ws.cell(row=header_row, column=col).value
+            # First occurrence wins: a P&L carries two "Var %" columns, one for
+            # budget and one for prior year, and only the budget one is coloured.
+            if isinstance(value, str) and value.strip() and value.strip() not in found:
+                found[value.strip()] = get_column_letter(col)
+        if "F/U" in found:
+            return found
+    return {}
+
+
+def _total_rows(ws) -> list[int]:
+    return [r for r in range(5, ws.max_row + 1)
+            if isinstance(ws.cell(row=r, column=1).value, str)
+            and ws.cell(row=r, column=1).value.lower().startswith(
+                ("total", "consolidated", "net income"))]
+
+
+def _check_total_row_formatting(wb, label: str) -> None:
+    """Every total row must be coloured by the same rules as the detail above it.
+
+    This is the check that was missing when the grand-total row rendered black
+    while every line above it was green or red: the formatting range stopped one
+    row short, and nothing noticed.
+    """
+    for name in wb.sheetnames:
+        ws = wb[name]
+        totals = _total_rows(ws)
+        if not totals or not list(ws.conditional_formatting):
+            continue
+        covered = _cf_cells(ws)
+        headers = _header_columns(ws)
+        watched = [headers[h] for h in ("F/U", "Var (Bud)", "Var %")
+                   if h in headers]
+        if not watched:
+            continue
+        missing = [f"{col}{row}" for row in totals for col in watched
+                   if f"{col}{row}" not in covered]
+        check(f"{label}: total row on '{name}' is conditionally formatted",
+              not missing, f"uncovered cells: {missing}")
+
+
 def test_workbooks() -> None:
     tmp = Path(tempfile.mkdtemp())
 
@@ -449,6 +517,11 @@ def test_workbooks() -> None:
           str(wb["P&L Report"]["B11"].value))
     check("Materiality levers are present and editable",
           wb["P&L Report"]["C9"].value == 25_000 and wb["P&L Report"]["G9"].value == 0.10)
+
+    # A total row is the line a reader looks at first, and it is the one an
+    # off-by-one in a formatting range silently drops: the detail above it goes
+    # green and red while the total stays black.
+    _check_total_row_formatting(wb, "Demo pack")
 
     # The sheet carries a footnote below the table, so count the contiguous
     # data rows rather than trusting max_row.
@@ -470,6 +543,8 @@ def test_workbooks() -> None:
           {"P&L Report", "Drivers", "GL Input"} <= set(wbc.sheetnames), str(wbc.sheetnames))
     check("Client P&L is formula-driven",
           str(wbc["P&L Report"]["B11"].value).startswith("="))
+
+    _check_total_row_formatting(wbc, "Client pack")
 
     # Client pack, actuals only: the variance columns must stay empty.
     actuals = agg.copy()
