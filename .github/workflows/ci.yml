@@ -41,10 +41,11 @@ jobs:
       - name: Verification suite
         run: python tests/audit.py
 
-      - name: Build both packs end to end
+      - name: Build every pack end to end
         run: |
           PYTHONPATH=src python -m flux.reporting.demo_pack
           PYTHONPATH=src python -m flux.reporting.client_pack
+          PYTHONPATH=src python -m flux.reporting.pptx_pack
 
       - name: App smoke test
         run: |
@@ -65,5 +66,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flux-packs
-          path: output/*.xlsx
+          path: |
+            output/*.xlsx
+            output/*.pptx
           retention-days: 14

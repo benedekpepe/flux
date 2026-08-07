@@ -40,7 +40,7 @@ from flux.commentary import generate_commentary, line_comments
 from flux.engine import (MaterialityRule, build_report, cost_centre_variances,
                          department_variances, entity_variances, has_budget,
                          leaf_variances)
-from flux.reporting import build_client_pack, build_demo_pack
+from flux.reporting import build_client_pack, build_demo_pack, build_pptx_pack
 from flux.reporting.client_pack import _group_expense_types
 from flux.synthetic_data import (generate_budget_year, generate_month,
                                  generate_ytd_transactions, monthly_detail)
@@ -498,6 +498,47 @@ def test_workbooks() -> None:
     comments = line_comments(rep_nb, actuals)
     check("Per-line comments claim no variance without a budget",
           all("no budget" in c.lower() for c in comments.values()))
+
+    # --- the management deck ------------------------------------------------
+    from pptx import Presentation
+
+    deck = build_pptx_pack(agg, PERIOD, tmp / "deck.pptx",
+                           detail=monthly_detail(PERIOD))
+    prs = Presentation(deck)
+    check("Deck has all five slides with a budget", len(prs.slides._sldIdLst) == 5,
+          str(len(prs.slides._sldIdLst)))
+
+    words = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                words.append(shape.text_frame.text)
+    joined = " ".join(words)
+    check("Cover names the reporting period", PERIOD in joined)
+    ni_actual = line(build_report(agg), "Net income").actual
+    check("Deck states the net income figure",
+          f"{ni_actual:,.0f}" in joined, "net income missing from the deck")
+    check("Deck explains the materiality rule", "materiality" in joined.lower())
+
+    charts = sum(1 for s in prs.slides for sh in s.shapes if sh.has_chart)
+    check("Deck carries native charts, not pictures of charts", charts == 2, str(charts))
+
+    tables = [sh.table for s in prs.slides for sh in s.shapes if sh.has_table]
+    check("Deck has the P&L table", len(tables) == 1, str(len(tables)))
+    if tables:
+        t = tables[0]
+        check("P&L table has a row per line plus a header",
+              len(t.rows) == len(PNL_STRUCTURE) + 1, str(len(t.rows)))
+
+    # Actuals only: the driver slide has nothing to say, so it must not appear.
+    deck_nb = build_pptx_pack(actuals, PERIOD, tmp / "deck_nobudget.pptx")
+    prs_nb = Presentation(deck_nb)
+    check("Deck drops the driver slide when there is no budget",
+          len(prs_nb.slides._sldIdLst) == 3, str(len(prs_nb.slides._sldIdLst)))
+    nb_text = " ".join(sh.text_frame.text for s in prs_nb.slides
+                       for sh in s.shapes if sh.has_text_frame)
+    check("Deck says a budget is missing rather than showing a zero variance",
+          "no budget" in nb_text.lower(), nb_text[:120])
 
 
 # ---------------------------------------------------------------------------

@@ -24,8 +24,8 @@ from flux import ingest
 from flux.ingest import (match_columns, _content_detect, apply_mapping,
                          CANONICAL, REQUIRED)
 from flux.engine import build_report, has_budget
-from flux.reporting import build_client_pack, build_demo_pack
-from flux.synthetic_data import generate_month
+from flux.reporting import build_client_pack, build_demo_pack, build_pptx_pack
+from flux.synthetic_data import generate_month, monthly_detail
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -51,6 +51,8 @@ st.caption("Turn a general ledger into a management P&L with variance analysis, 
 
 SAMPLE_PERIOD = "2025-06"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PPTX_MIME = ("application/vnd.openxmlformats-officedocument"
+             ".presentationml.presentation")
 
 st.sidebar.markdown("### How it works")
 st.sidebar.caption(
@@ -101,12 +103,12 @@ def _offer_download(path: Path, label: str, key: str):
     st.session_state[key] = {"name": path.name, "data": path.read_bytes()}
 
 
-def _render_download(key: str, label: str):
+def _render_download(key: str, label: str, mime: str = XLSX_MIME):
     payload = st.session_state.get(key)
     if not payload:
         return
     st.download_button(label, payload["data"], file_name=payload["name"],
-                       mime=XLSX_MIME, width="stretch", key=f"dl_{key}")
+                       mime=mime, width="stretch", key=f"dl_{key}")
 
 
 # Sample data leads. A visitor arriving on the upload tab sees an empty form and
@@ -253,11 +255,25 @@ with tab_upload:
             _pnl_preview(preview, budgeted)
 
             st.markdown("#### 4 · Download the pack")
-            if st.button("Generate pack", type="primary", width="stretch"):
+            st.caption(
+                "The workbook is the working file — every figure a live formula "
+                "over the input sheet. The deck is the five slides you send "
+                "upward. Same engine, same numbers."
+            )
+            gen_x, gen_p = st.columns(2)
+            if gen_x.button("Generate Excel pack", type="primary", width="stretch"):
                 out = Path(tempfile.gettempdir()) / "flux_pack.xlsx"
                 build_client_pack(std, active, out, budgeted=budgeted)
                 _offer_download(out, "Download flux_pack.xlsx", "pack_upload")
-            _render_download("pack_upload", "Download flux_pack.xlsx")
+            if gen_p.button("Generate PowerPoint deck", width="stretch"):
+                out = Path(tempfile.gettempdir()) / "flux_management_pack.pptx"
+                build_pptx_pack(preview, active, out, budgeted=budgeted)
+                _offer_download(out, "Download deck", "deck_upload")
+            with gen_x:
+                _render_download("pack_upload", "Download flux_pack.xlsx")
+            with gen_p:
+                _render_download("deck_upload", "Download flux_management_pack.pptx",
+                                 PPTX_MIME)
 
 # ---------------------------------------------------------------------------
 with tab_sample:
@@ -269,8 +285,17 @@ with tab_sample:
     )
     sample = generate_month(SAMPLE_PERIOD).drop(columns="period")
     _pnl_preview(sample, True)
-    if st.button("Generate sample pack", type="primary", width="stretch"):
+    col_x, col_p = st.columns(2)
+    if col_x.button("Generate Excel pack", type="primary", width="stretch"):
         out = Path(tempfile.gettempdir()) / "flux_sample_pack.xlsx"
         build_demo_pack(SAMPLE_PERIOD, out)
         _offer_download(out, "Download flux_sample_pack.xlsx", "pack_sample")
-    _render_download("pack_sample", "Download flux_sample_pack.xlsx")
+    if col_p.button("Generate PowerPoint deck", width="stretch"):
+        out = Path(tempfile.gettempdir()) / "flux_sample_deck.pptx"
+        build_pptx_pack(sample, SAMPLE_PERIOD, out,
+                        detail=monthly_detail(SAMPLE_PERIOD))
+        _offer_download(out, "Download flux_sample_deck.pptx", "deck_sample")
+    with col_x:
+        _render_download("pack_sample", "Download flux_sample_pack.xlsx")
+    with col_p:
+        _render_download("deck_sample", "Download flux_sample_deck.pptx", PPTX_MIME)

@@ -10,8 +10,8 @@ tab to generate the full pack with no sign-up, or upload your own ledger.
 A management reporting engine that turns a general ledger into a **management
 P&L with variance analysis** — budget and prior-year variances, favourable /
 unfavourable classification, materiality flagging, and consolidation by legal
-entity, department and cost centre — delivered as a **live Excel pack** and a
-written commentary, behind a Streamlit app.
+entity, department and cost centre — delivered as a **live Excel pack**, a
+**PowerPoint management deck** and a written commentary, behind a Streamlit app.
 
 The name refers to *flux analysis*: the FP&A practice of explaining the movement
 between actual results and budget or prior periods. That is the work this engine
@@ -64,6 +64,10 @@ automates.
 
 ![Department spend variance with cost centres nested beneath each department](docs/departments.png)
 
+**PowerPoint deck — the same numbers as five slides, for sending upward**
+
+![Four slides of the generated management deck: cover, result, P&L and drivers](docs/pptx-pack.png)
+
 ## How it works
 
 1. **Ingestion** — an arbitrary export is mapped onto the internal schema in
@@ -80,8 +84,11 @@ automates.
 5. **Excel pack** — the workbook is written with **live formulas over an input
    sheet**, so an edited input recalculates the whole pack. The sheets that get
    built depend on the dimensions present in the data.
-6. **App** — a Streamlit front end for upload, mapping confirmation, preview and
-   download.
+6. **Deck** — the same numbers as five slides: the result, the P&L, what moved
+   it, and where the money went. Native PowerPoint charts and tables, not
+   images, so the recipient can edit them.
+7. **App** — a Streamlit front end for upload, mapping confirmation, preview and
+   download of either output.
 
 ### The materiality rule
 
@@ -160,7 +167,7 @@ reports June, and a multi-period file gets a year-to-date view beside the month.
 
 ## Tech stack
 
-Python · pandas · NumPy · openpyxl · Streamlit. No heavyweight dependencies: the
+Python · pandas · NumPy · openpyxl · python-pptx · Streamlit. No heavyweight dependencies: the
 reporting logic is plain and fast, and the Excel layer writes formulas rather
 than values.
 
@@ -179,7 +186,8 @@ flux/
 │       ├── styling.py           # palette, type, number formats, sheet chrome
 │       ├── formulas.py          # Excel formula builders + materiality levers
 │       ├── demo_pack.py         # the multi-entity showcase, from generated data
-│       └── client_pack.py       # the pack built from an ingested client file
+│       ├── client_pack.py       # the pack built from an ingested client file
+│       └── pptx_pack.py         # the five-slide management deck
 ├── scripts/
 │   ├── demo.py                  # console P&L, drivers and commentary
 │   └── make_template.py         # builds data/input_template.xlsx
@@ -228,7 +236,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 107 checks` means everything is wired up correctly.
+`PASSED all 116 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -262,6 +270,7 @@ the package lives under `src/flux/`:
 ```bash
 PYTHONPATH=src python -m flux.reporting.demo_pack      # -> output/flux_demo_pack.xlsx
 PYTHONPATH=src python -m flux.reporting.client_pack    # -> output/flux_client_pack.xlsx
+PYTHONPATH=src python -m flux.reporting.pptx_pack      # -> output/flux_management_pack.pptx
 ```
 
 ```powershell
@@ -288,14 +297,14 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**107 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**116 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number
 being read as an amount), aggregation and the proportional budget join,
 reporting-period derivation, expense grouping, cross-view reconciliation, the
-structure of both generated workbooks, the actuals-only contract, and edge
-cases. Exits non-zero on any failure.
+structure of both generated workbooks and of the deck, the actuals-only
+contract, and edge cases. Exits non-zero on any failure.
 
 The reconciliation checks are the load-bearing ones: the entity, department,
 cost-centre and expense-type views must all tie to the same total as the P&L, and
@@ -303,7 +312,7 @@ the P&L must tie to the source transactions.
 
 They also run automatically on every push and pull request via GitHub Actions
 (Python 3.11 and 3.12), together with the linter, an import smoke test, an
-end-to-end build of both packs, and a headless render of the Streamlit app — see
+end-to-end build of all three packs, and a headless render of the Streamlit app — see
 the CI badge at the top. The generated packs are uploaded as a build artifact, so
 every green run leaves a downloadable workbook.
 
@@ -329,9 +338,8 @@ every green run leaves a downloadable workbook.
 - [x] Accounting sign conventions and the actuals-only path.
 - [x] Verification suite and CI.
 - [x] Public deploy (Streamlit Community Cloud).
-- [ ] PowerPoint management pack (python-pptx).
-- [ ] Next.js front end for upload and interactive review.
-- [ ] Historical storage and period-over-period trending (PostgreSQL).
+- [x] PowerPoint management pack (python-pptx).
+- [ ] Period-over-period trend view, from the periods already in the file.
 
 ## License
 
