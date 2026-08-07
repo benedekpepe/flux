@@ -591,6 +591,26 @@ def test_workbooks() -> None:
     # green and red while the total stays black.
     _check_total_row_formatting(wb, "Demo pack")
 
+    # Roll-up rows carry commentary; leaf rows do not, because there the comment
+    # could only restate the columns beside it. And the comment must cover both
+    # timeframes, so it explains the flag rather than repeating one column.
+    for name, roll_row, leaf_row in (("Departments & CCs", 6, 7),
+                                     ("By Entity", 6, None)):
+        ws = wb[name]
+        headers_row = [ws.cell(row=5, column=c).value for c in range(1, ws.max_column + 1)]
+        check(f"Demo pack: '{name}' carries a commentary column",
+              headers_row[-1] == "Commentary", str(headers_row[-1]))
+        text = ws.cell(row=roll_row, column=ws.max_column).value or ""
+        check(f"Demo pack: '{name}' comments its roll-up rows on both timeframes",
+              "YTD" in text and "Month" in text, text[:80])
+        if leaf_row:
+            leaf = ws.cell(row=leaf_row, column=ws.max_column).value
+            check(f"Demo pack: '{name}' leaves its leaf rows uncommented",
+                  leaf in (None, ""), str(leaf)[:60])
+    pnl_comment = wb["P&L Report"].cell(row=11, column=wb["P&L Report"].max_column).value or ""
+    check("Demo pack: the P&L commentary covers the year to date, not just the month",
+          pnl_comment.startswith("YTD"), pnl_comment[:80])
+
     # The sheet carries a footnote below the table, so count the contiguous
     # data rows rather than trusting max_row.
     gl_ws = wb["GL Transactions"]

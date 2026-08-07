@@ -84,6 +84,52 @@ def _join_names(items: list[str]) -> str:
     return "; ".join(items)
 
 
+
+# ---------------------------------------------------------------------------
+# Two-horizon commentary
+# ---------------------------------------------------------------------------
+# A comment that describes only the month cannot explain the flag beside it.
+# MONTH, YTD and BOTH are three different stories - a one-off, a pattern the
+# month happens not to show, and a pattern the month is still feeding - and the
+# commentary is the one column with room to say which.
+
+def _clause(var: float, pct, fu_word: str | None = None) -> str:
+    """One timeframe, as a phrase: amount, percentage, direction, verdict."""
+    direction = "above" if var >= 0 else "below"
+    if not _not_meaningful(pct) and abs(pct) < 0.005:
+        # "In line with budget, unfavourable" is a contradiction: a line that
+        # did not move has no verdict worth printing.
+        return "in line with budget"
+    if _not_meaningful(pct):
+        core = f"{_mag(var)} {direction} budget, percentage not meaningful"
+    else:
+        core = f"{_mag(var)} ({_pct(pct)}) {direction} budget"
+    return f"{core}, {fu_word}" if fu_word else core
+
+
+_VERDICTS = {
+    (True, True): "Material on both timeframes.",
+    (False, True): "Material cumulatively; the month alone stays within the floors.",
+    (True, False): "Material this month; the year to date is still within the floors.",
+    (False, False): "Neither timeframe clears the materiality floors.",
+}
+
+
+def _two_horizon(month: tuple, ytd: tuple, fu_word: str) -> str:
+    """The shared sentence shape: year to date, then month, then the verdict.
+
+    Each tuple is (variance, percentage, material). The year to date leads
+    because it is the trend; the month follows because it is the latest point.
+    Reversing them makes every comment read as news even when the line has been
+    drifting since January.
+    """
+    m_var, m_pct, m_mat = month
+    y_var, y_pct, y_mat = ytd
+    return (f"YTD {_clause(y_var, y_pct, fu_word)}. "
+            f"Month {_clause(m_var, m_pct)}. "
+            f"{_VERDICTS[(bool(m_mat), bool(y_mat))]}")
+
+
 def _line(report: pd.DataFrame, label: str) -> dict:
     row = report[report["line"] == label].iloc[0]
     return row.to_dict()
@@ -244,13 +290,20 @@ def line_comments(
     report: pd.DataFrame,
     gl: pd.DataFrame,
     materiality: MaterialityRule | None = None,
+    ytd_report: pd.DataFrame | None = None,
+    ytd_gl: pd.DataFrame | None = None,
 ) -> dict[str, str]:
     """Short per-line commentary for the P&L, keyed by line label.
 
-    Each comment states the budget variance in EUR and %, direction and
-    favourability, flags materiality, and for category lines names the material
-    account-level drivers sitting inside that line. Generated at build time, so
-    it refreshes when the export is re-run rather than live in-cell.
+    With a year-to-date report supplied, each comment covers both timeframes and
+    says which one clears the materiality floors - the same verdict the Flag
+    column carries, spelled out. Without one it falls back to describing the
+    month alone, which is what the deck needs.
+
+    For category lines the comment also names the material account-level drivers
+    sitting inside that line, taken from whichever timeframe is doing the
+    talking. Generated at build time, so it refreshes when the export is re-run
+    rather than live in-cell.
     """
     materiality = materiality or MaterialityRule()
     if not _budgeted(report):
@@ -259,9 +312,6 @@ def line_comments(
         return {r["line"]: f"{_mag(r['actual'])} actual; no budget supplied."
                 for _, r in report.iterrows()}
 
-    leaves = leaf_variances(gl, materiality)
-    material = leaves[leaves["material"]]
-
     cat_of_line = {
         "Revenue": "Revenue",
         "Cost of goods sold": "COGS",
@@ -269,34 +319,147 @@ def line_comments(
         "Other expenses": "Other",
     }
 
+    month_material = leaf_variances(gl, materiality)
+    month_material = month_material[month_material["material"]]
+    ytd_rows = None
+    if ytd_report is not None:
+        ytd_rows = {r["line"]: r for _, r in ytd_report.iterrows()}
+        ytd_material = leaf_variances(ytd_gl if ytd_gl is not None else gl, materiality)
+        ytd_material = ytd_material[ytd_material["material"]]
+    else:
+        ytd_material = month_material
+
+    def drivers(pool, category) -> str:
+        drv = pool[pool["category"] == category]
+        if not len(drv):
+            return ""
+        names = _join_names([d["account_name"].lower() for _, d in drv.iterrows()])
+        lead = ("offsetting movements in" if len(set(drv["fav_unfav"])) > 1
+                else "driven by")
+        return f" {lead.capitalize()[0]}{lead[1:]} {names}."
+
     comments: dict[str, str] = {}
     for _, r in report.iterrows():
         label = r["line"]
-        var = r["var_bud"]
-        pct = r["var_bud_pct"]
         fu = "favourable" if r["fav_unfav"] == "F" else "unfavourable"
-        direction = "above" if var >= 0 else "below"
 
-        if not _not_meaningful(pct) and abs(pct) < 0.005:
-            base = "In line with budget"
-        elif _not_meaningful(pct):
-            base = f"{_mag(var)} {direction} budget, {fu}; percentage not meaningful"
+        if ytd_rows is None or label not in ytd_rows:
+            # No cumulative figures: describe the month and stop there rather
+            # than implying a trend the caller has not supplied.
+            base = _clause(r["var_bud"], r["var_bud_pct"], fu)
+            base = base[0].upper() + base[1:]
+            if r["material"]:
+                base += "; material"
+            base += "." + drivers(month_material, cat_of_line.get(label, ""))
+            comments[label] = base.strip()
+            continue
+
+        y = ytd_rows[label]
+        base = _two_horizon((r["var_bud"], r["var_bud_pct"], r["material"]),
+                            (y["var_bud"], y["var_bud_pct"], y["material"]), fu)
+        # The drivers come from whichever timeframe is doing the talking: a
+        # month-only movement is not explained by the accounts that have been
+        # drifting all year.
+        pool = month_material if (r["material"] and not y["material"]) else ytd_material
+        if r["material"] or y["material"]:
+            base += drivers(pool, cat_of_line.get(label, ""))
+        comments[label] = base.strip()
+    return comments
+
+
+def rollup_comments(
+    detail: pd.DataFrame,
+    parent: str,
+    child: str,
+    materiality: MaterialityRule | None = None,
+    higher_is_better: bool = False,
+    child_names: dict | None = None,
+    ytd_detail: pd.DataFrame | None = None,
+) -> dict[str, str]:
+    """Commentary for the roll-up rows of any parent/child dimension.
+
+    Written only for rows that have something underneath them - a department
+    over its cost centres, an expense group over its types, an entity over its
+    departments. On a leaf row the comment could only restate the variance and
+    percentage sitting in the columns beside it, which is noise; on a roll-up it
+    can name *which* of the lines below moved the total, and that is not on the
+    row.
+
+    Every roll-up gets one, not just the material ones. A blank cell is
+    ambiguous - nothing moved, or nothing was generated? - and "neither
+    timeframe clears the floors" is an answer. The Flag column is what points a
+    reader at the rows worth stopping on; this column explains them.
+
+    `child_names` maps a child key to how it should read in prose, for the
+    dimensions whose key is a code rather than a name.
+    """
+    materiality = materiality or MaterialityRule()
+    child_names = child_names or {}
+    needed = {parent, child, "actual", "budget"}
+    if not needed <= set(detail.columns):
+        return {}
+
+    def verdict(var, budget):
+        pct = None if abs(budget) < 100 else var / abs(budget)
+        if pct is not None and abs(pct) > 10:
+            pct = None
+        fu = "F" if (var >= 0 if higher_is_better else var <= 0) else "U"
+        material = (abs(var) >= materiality.abs_threshold
+                    and (pct is None or abs(pct) >= materiality.pct_threshold))
+        return pct, fu, material
+
+    def totals(frame):
+        return (frame.groupby(parent, as_index=False)[["actual", "budget"]].sum(),
+                frame.groupby([parent, child], as_index=False)[["actual", "budget"]].sum())
+
+    parents, children = totals(detail)
+    if ytd_detail is not None and needed <= set(ytd_detail.columns):
+        y_parents, y_children = totals(ytd_detail)
+    else:
+        y_parents = y_children = None
+
+    def movers(frame, key):
+        named = []
+        for _, c in frame[frame[parent] == key].iterrows():
+            cvar = c["actual"] - c["budget"]
+            _cpct, cfu, cmaterial = verdict(cvar, c["budget"])
+            if cmaterial:
+                named.append((str(child_names.get(c[child], c[child])).lower(), cfu))
+        if not named:
+            return ""
+        names = _join_names([m for m, _ in named])
+        mixed = len({fu for _, fu in named}) > 1
+        lead = "Offsetting movements in" if mixed else "Driven by"
+        return f" {lead} {names}."
+
+    comments: dict[str, str] = {}
+    for _, p in parents.iterrows():
+        key = p[parent]
+        var = p["actual"] - p["budget"]
+        pct, fu, material = verdict(var, p["budget"])
+        word = "favourable" if fu == "F" else "unfavourable"
+
+        if y_parents is None:
+            base = _clause(var, pct, word)
+            base = base[0].upper() + base[1:]
+            if material:
+                base += "; material"
+            base += "." + movers(children, key)
+            comments[key] = base.strip()
+            continue
+
+        row = y_parents[y_parents[parent] == key]
+        if row.empty:
+            y_var, y_pct, y_material = var, pct, material
         else:
-            base = f"{_mag(var)} ({_pct(pct)}) {direction} budget, {fu}"
+            y_var = float(row["actual"].iloc[0] - row["budget"].iloc[0])
+            y_pct, _y_fu, y_material = verdict(y_var, float(row["budget"].iloc[0]))
 
-        if r["material"]:
-            base += "; material"
-
-        if label in cat_of_line:
-            drv = material[material["category"] == cat_of_line[label]]
-            if len(drv):
-                names = _join_names([d["account_name"].lower() for _, d in drv.iterrows()])
-                if len(set(drv["fav_unfav"])) > 1:
-                    base += f"; offsetting movements in {names}"
-                else:
-                    base += f"; driven by {names}"
-
-        comments[label] = base + "."
+        base = _two_horizon((var, pct, material), (y_var, y_pct, y_material), word)
+        if material or y_material:
+            pool = children if (material and not y_material) else y_children
+            base += movers(pool if pool is not None else children, key)
+        comments[key] = base.strip()
     return comments
 
 

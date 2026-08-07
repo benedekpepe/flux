@@ -29,9 +29,9 @@ from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 
-from ..coa import (PNL_STRUCTURE, CATEGORY_FAVOURABLE, FAV_HIGHER,
+from ..coa import (PNL_STRUCTURE, CATEGORY_FAVOURABLE, FAV_HIGHER, COST_CENTRES,
                    SPEND_DEPARTMENTS, DEPARTMENT_COST_CENTRES, EXPENSE_GROUPS)
-from ..commentary import line_comments
+from ..commentary import line_comments, rollup_comments
 from ..engine import build_report
 from .styling import (
     F_HEAD, F_BODY, F_SMALL, F_SUB, F_INPUT, F_KPI_LABEL, F_KPI_VALUE, F_NOTE,
@@ -240,6 +240,46 @@ def _write_budget(ws, bud, period) -> tuple[int, int]:
     )
 
 
+# Cost centres are keyed by code on the sheet but read by name in prose.
+CC_NAMES = {code: name for _dept, code, name in COST_CENTRES}
+
+# The expense groups are a constant, not a column, so a roll-up commentary over
+# them needs the mapping materialised onto the frame first.
+_GROUP_OF_TYPE = {t: name for name, types in EXPENSE_GROUPS for t in types}
+
+
+def _with_group(detail):
+    """The detail frame with its expense group attached."""
+    out = detail.copy()
+    out["expense_group"] = out["expense_type"].map(_GROUP_OF_TYPE).fillna("Other expense types")
+    return out
+
+
+def _net_detail(detail):
+    """The detail frame signed so that a total reads as net income.
+
+    The By Entity sheet reports revenue less spend, so a commentary built on the
+    raw frame would add the two together and cheerfully call an overspending
+    entity favourable - a comment contradicting the row it sits beside.
+    """
+    out = detail.copy()
+    sign = out["category"].eq("Revenue").map({True: 1.0, False: -1.0})
+    for col in ("actual", "budget"):
+        out[col] = out[col] * sign
+    return out
+
+
+def _ytd_detail(txns, bud, perno):
+    """Year-to-date actuals and plan at the same grain as `monthly_detail`."""
+    keys = ["entity", "department", "cost_centre", "account_code",
+            "account_name", "category", "expense_type"]
+    act = (txns[txns["period_no"] <= perno].groupby(keys, as_index=False)["amount_eur"]
+           .sum().rename(columns={"amount_eur": "actual"}))
+    plan = (bud[bud["period_no"] <= perno].groupby(keys, as_index=False)["budget_eur"]
+            .sum().rename(columns={"budget_eur": "budget"}))
+    return act.merge(plan, on=keys, how="outer").fillna(0.0)
+
+
 # ===========================================================================
 # P&L Report
 # ===========================================================================
@@ -388,20 +428,23 @@ def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report,
 # ===========================================================================
 # Expense Report (natural view: expense type)
 # ===========================================================================
-def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
+def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period,
+                          comments=None) -> None:
     hide_grid(ws)
     L = Layout(1)
+    com = get_column_letter(L.ncols + 1)
+    comments = comments or {}
     # The meta line is built centrally, so the fiscal year follows the period
     # rather than a constant: hardcoded, this header still read "FY 2025" for a
     # 2026 close, and it phrased the same three horizons differently from the
     # sheet next to it.
-    title_band(ws, "Expense Report · by expense type", meta_line(period),
-               L.last_col)
+    title_band(ws, "Expense Report · by expense type", meta_line(period), com)
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
     bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
     perno = int(period[:4]) * 100 + int(period[5:7])
 
-    headers(ws, 5, L.headers("Expense Type"), center_from=2, center_to=L.ncols)
+    headers(ws, 5, L.headers("Expense Type") + ["Commentary"], center_from=2,
+            center_to=L.ncols)
     _lever_echo(ws, L)
 
     first, r, i = 6, 6, 0
@@ -426,7 +469,7 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
                              f'{bR(BUD_PERNO)},"<={perno}")')
             ws[c["fybud"]] = f'=SUMIF({bR(BUD_EXP)},"{et}",{bR(BUD_BUD)})'
             _tail(ws, L, r, higher=False, bold=single)
-            for col in L.span():
+            for col in L.span() + [com]:
                 cell = ws[f"{col}{r}"]; cell.fill = band
                 if single:
                     cell.border = SUBTOTAL_TOP
@@ -442,10 +485,15 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
         ws.cell(row=r, column=1, value=group_name).font = F_SUB
         ws.cell(row=r, column=1).alignment = LEFT
         _sum_tail(ws, L, r, type_rows, higher=False)
-        for col in L.span():
+        for col in L.span() + [com]:
             cell = ws[f"{col}{r}"]; cell.fill = FILL_IVORY
             cell.border = SUBTOTAL_TOP
-        ws.row_dimensions[r].height = 21
+        # Only the groups carry a comment: a single expense type has nothing
+        # underneath it to name, so the comment could only repeat its own row.
+        note_text = comments.get(group_name, "")
+        kc = ws[f"{com}{r}"]; kc.value = note_text
+        kc.font = F_SUB; kc.alignment = WRAP
+        ws.row_dimensions[r].height = max(21, wrapped_height(note_text, COMMENT_WIDTH))
         group_rows.append(r); all_rows.append(r)
         i = 0
         r += 1
@@ -454,7 +502,7 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
     ws.cell(row=r, column=1, value="Total expenses").font = F_SUB
     ws.cell(row=r, column=1).alignment = LEFT
     _sum_tail(ws, L, r, group_rows, higher=False)
-    for col in L.span():
+    for col in L.span() + [com]:
         ws[f"{col}{r}"].fill = FILL_IVORY
         ws[f"{col}{r}"].border = TOTAL_TOP
     ws.row_dimensions[r].height = 24
@@ -468,7 +516,7 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
                   "so an overspend is unfavourable whichever timeframe it shows up in."
             ).font = F_NOTE
 
-    widths(ws, L.widths(28))
+    widths(ws, L.widths(28) + [COMMENT_WIDTH])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 2)
     ws.freeze_panes = f"B{first}"
@@ -477,7 +525,8 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
 # ===========================================================================
 # By Entity
 # ===========================================================================
-def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None:
+def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period,
+                     comments=None) -> None:
     """Net income per legal entity, on the same columns as every other sheet.
 
     The measure is net income - revenue less spend - because that is the one
@@ -486,8 +535,11 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None
     """
     hide_grid(ws)
     L = Layout(1)
-    title_band(ws, "By Entity · net income by legal entity", meta_line(period), L.last_col)
-    headers(ws, 5, L.headers("Entity"), center_from=2, center_to=L.ncols)
+    com = get_column_letter(L.ncols + 1)
+    comments = comments or {}
+    title_band(ws, "By Entity · net income by legal entity", meta_line(period), com)
+    headers(ws, 5, L.headers("Entity") + ["Commentary"], center_from=2,
+            center_to=L.ncols)
     _lever_echo(ws, L)
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
     bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
@@ -517,16 +569,19 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None
         ws[c["ybud"]] = net_bud(ent, yfltb)
         ws[c["fybud"]] = net_bud(ent, "")
         _tail(ws, L, r, higher=True)
-        for col in L.span():
+        for col in L.span() + [com]:
             ws[f"{col}{r}"].fill = band
-        ws.row_dimensions[r].height = 22
+        note_text = comments.get(ent, "")
+        kc = ws[f"{com}{r}"]; kc.value = note_text
+        kc.font = F_BODY; kc.alignment = WRAP
+        ws.row_dimensions[r].height = max(22, wrapped_height(note_text, COMMENT_WIDTH))
         rows.append(r); r += 1
     last = r - 1
 
     ws.cell(row=r, column=1, value="Consolidated").font = F_SUB
     ws.cell(row=r, column=1).alignment = LEFT
     _sum_tail(ws, L, r, rows, higher=True)
-    for col in L.span():
+    for col in L.span() + [com]:
         ws[f"{col}{r}"].fill = FILL_IVORY
         ws[f"{col}{r}"].border = TOTAL_TOP
     ws.row_dimensions[r].height = 24
@@ -539,7 +594,7 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None
             value="Each entity's net income is its revenue less its spend, which is why "
                   "the entities consolidate to the group P&L. The revenue and spend "
                   "halves are on the P&L Report.").font = F_NOTE
-    widths(ws, L.widths(18))
+    widths(ws, L.widths(18) + [COMMENT_WIDTH])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 2)
     ws.freeze_panes = f"A{first}"
@@ -548,13 +603,16 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None
 # ===========================================================================
 # Cost Centres
 # ===========================================================================
-def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> None:
+def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period,
+                        comments=None) -> None:
     """Departmental spend variance with each department's cost centres nested."""
     hide_grid(ws)
     L = Layout(1)
-    title_band(ws, "Departments & Cost Centres · spend variance", meta_line(period), L.last_col)
-    headers(ws, 5, L.headers("Department / Cost Centre"), center_from=2,
-            center_to=L.ncols)
+    com = get_column_letter(L.ncols + 1)
+    comments = comments or {}
+    title_band(ws, "Departments & Cost Centres · spend variance", meta_line(period), com)
+    headers(ws, 5, L.headers("Department / Cost Centre") + ["Commentary"],
+            center_from=2, center_to=L.ncols)
     _lever_echo(ws, L)
 
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
@@ -585,10 +643,16 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
         ws[c["ybud"]] = spend_bud(BUD_DEPT, dept, yfltb)
         ws[c["fybud"]] = spend_bud(BUD_DEPT, dept, "")
         _tail(ws, L, r, higher=False, bold=True)
-        for col in L.span():
+        for col in L.span() + [com]:
             ws[f"{col}{r}"].fill = FILL_IVORY
             ws[f"{col}{r}"].border = SUBTOTAL_TOP
-        ws.row_dimensions[r].height = 22
+        # The department is the roll-up, so it is the row that can name which of
+        # its cost centres moved the total. The cost centres below it are leaves
+        # and get nothing: there the comment could only restate the row.
+        note_text = comments.get(dept, "")
+        kc = ws[f"{com}{r}"]; kc.value = note_text
+        kc.font = F_SUB; kc.alignment = WRAP
+        ws.row_dimensions[r].height = max(22, wrapped_height(note_text, COMMENT_WIDTH))
         dept_rows.append(r); all_rows.append(r); r += 1
 
         for i, (cc_code, cc_name) in enumerate(DEPARTMENT_COST_CENTRES[dept]):
@@ -603,7 +667,7 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
             ws[c["fybud"]] = spend_bud(BUD_CC, cc_code, "")
             _tail(ws, L, r, higher=False)
             band = band_fill(i)
-            for col in L.span():
+            for col in L.span() + [com]:
                 ws[f"{col}{r}"].fill = band
             ws.row_dimensions[r].height = 18
             all_rows.append(r); r += 1
@@ -613,7 +677,7 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
     ws.cell(row=r, column=1, value="Total spend").font = F_SUB
     ws.cell(row=r, column=1).alignment = LEFT
     _sum_tail(ws, L, r, dept_rows, higher=False)
-    for col in L.span():
+    for col in L.span() + [com]:
         ws[f"{col}{r}"].fill = FILL_IVORY
         ws[f"{col}{r}"].border = TOTAL_TOP
     ws.row_dimensions[r].height = 24
@@ -625,7 +689,7 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
                   "department, shown as code plus description. Totals sum the departments "
                   "only. Revenue is excluded: this is a spend view.").font = F_NOTE
 
-    widths(ws, L.widths(32))
+    widths(ws, L.widths(32) + [COMMENT_WIDTH])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 3)
     ws.freeze_panes = f"A{first}"
@@ -700,8 +764,27 @@ def build_demo_pack(period: str, out_path: str | Path, seed: int = 42) -> Path:
     detail = monthly_detail(period, seed)
     agg = generate_month(period, seed).drop(columns="period")
 
+    perno = int(period[:4]) * 100 + int(period[5:7])
+    ytd_detail = _ytd_detail(txns, bud, perno)
+    ytd_agg = (ytd_detail.groupby(["account_code", "account_name", "category"],
+                                  as_index=False)[["actual", "budget"]].sum())
+    # The engine reports a prior-year column; the year-to-date frame is built
+    # for the commentary only and carries no prior year, so it is zeroed rather
+    # than left missing.
+    ytd_agg["prior_year"] = 0.0
+
     report = build_report(agg)
-    comments = line_comments(report, agg)
+    ytd_report = build_report(ytd_agg)
+    # The commentary covers both timeframes, so it can explain the flag beside
+    # it rather than restating one of the columns.
+    comments = line_comments(report, agg, ytd_report=ytd_report, ytd_gl=ytd_agg)
+    dept_comments = rollup_comments(detail, "department", "cost_centre",
+                                    child_names=CC_NAMES, ytd_detail=ytd_detail)
+    ent_comments = rollup_comments(_net_detail(detail), "entity", "department",
+                                   higher_is_better=True,
+                                   ytd_detail=_net_detail(ytd_detail))
+    exp_comments = rollup_comments(_with_group(detail), "expense_group",
+                                   "expense_type", ytd_detail=_with_group(ytd_detail))
     dept_var = department_variances(detail)
     ent_var = entity_variances(detail)
 
@@ -715,9 +798,12 @@ def build_demo_pack(period: str, out_path: str | Path, seed: int = 42) -> Path:
                       "period_no"].nunique() or 1
     _write_pnl(wb.create_sheet("P&L Report"), GL, glf, gll, BUD, budf, budl,
                period, comments, report, months)
-    _write_expense_report(wb.create_sheet("Expense Report"), GL, glf, gll, BUD, budf, budl, period)
-    _write_by_entity(wb.create_sheet("By Entity"), ent_var, GL, glf, gll, BUD, budf, budl, period)
-    _write_cost_centres(wb.create_sheet("Departments & CCs"), dept_var, GL, glf, gll, BUD, budf, budl, period)
+    _write_expense_report(wb.create_sheet("Expense Report"), GL, glf, gll, BUD,
+                          budf, budl, period, exp_comments)
+    _write_by_entity(wb.create_sheet("By Entity"), ent_var, GL, glf, gll, BUD,
+                     budf, budl, period, ent_comments)
+    _write_cost_centres(wb.create_sheet("Departments & CCs"), dept_var, GL, glf,
+                        gll, BUD, budf, budl, period, dept_comments)
     _write_drivers(wb.create_sheet("Drivers"), agg, GL, glf, gll, BUD, budf, budl, period)
 
     desired = ["P&L Report", "Expense Report", "By Entity",

@@ -48,8 +48,10 @@ automates.
   four columns (actual, plan, variance, variance %), then F/U and the flag. The sheets
   differ in what they cut the ledger by, never in how they report it, so a reader
   who has learnt the P&L has learnt the pack.
-- **Written commentary** per line and for the pack as a whole, generated from the
-  actual drivers.
+- **Written commentary** on every roll-up row and for the pack as a whole,
+  generated from the actual drivers. Each comment covers the year to date *and*
+  the month and says which of them clears the materiality floors — so it
+  explains the flag beside it rather than restating a column.
 - **Reads real ledger files** — accounting sign conventions, EU and US number
   formats, English and Hungarian headers, debit/credit columns.
 
@@ -250,6 +252,29 @@ to work out why the month and the year to date are identical.
 
 ## Commentary
 
+Every comment has the same shape: the year to date, then the month, then the
+verdict, then what moved it.
+
+> YTD €255.7k (21.8%) above budget, unfavourable. Month €45.8k (22.1%) above
+> budget. Material on both timeframes. Driven by brand & content, demand
+> generation and events.
+
+The year to date leads because it is the trend; the month follows because it is
+the latest point. Reversing them makes every comment read as news even when the
+line has been drifting since January.
+
+Commentary is written on **roll-up rows only** — a P&L line over its accounts, a
+department over its cost centres, an expense group over its types, an entity over
+its departments. There it can name *which* of the lines below moved the total,
+which is not on the row. On a leaf row the comment could only restate the
+variance and percentage in the columns beside it, so the Drivers sheet and the
+cost-centre lines carry none.
+
+Every roll-up gets one, not only the material ones: a blank cell is ambiguous —
+nothing moved, or nothing was generated? — and "neither timeframe clears the
+floors" is an answer. The Flag column is what points a reader at the rows worth
+stopping on; the commentary explains them.
+
 - **Template mode** (default) — pure Python, no API key, no cost. Describes
   magnitude and direction faithfully; it does not invent root causes.
 - **LLM mode** (optional) — with `ANTHROPIC_API_KEY` set, the template narrative
@@ -332,7 +357,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 178 checks` means everything is wired up correctly.
+`PASSED all 184 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -393,7 +418,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**178 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**184 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

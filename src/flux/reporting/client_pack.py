@@ -25,7 +25,7 @@ from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 
 from ..coa import PNL_STRUCTURE, CATEGORY_FAVOURABLE, FAV_HIGHER, EXPENSE_GROUPS
-from ..commentary import line_comments
+from ..commentary import line_comments, rollup_comments
 from ..engine import build_report, has_budget as _detect_budget
 from .styling import (
     F_BODY, F_SMALL, F_SUB, F_INPUT, F_KPI_LABEL, F_KPI_VALUE, F_NOTE, F_META, F_KPI_DELTA,
@@ -128,6 +128,20 @@ def _filters(R, GLC, perno):
         return (f',{R(GLC["period_no"])},{perno}',
                 f',{R(GLC["period_no"])},"<={perno}"')
     return "", ""
+
+
+def _net_frame(frame):
+    """The frame signed so a total reads as net income, not revenue plus spend.
+
+    The By Entity sheet reports revenue less spend; a commentary built on the
+    raw frame would add them together and call an overspending entity
+    favourable, contradicting the row it sits beside.
+    """
+    out = frame.copy()
+    sign = out["category"].eq("Revenue").map({True: 1.0, False: -1.0})
+    for col in ("actual", "budget"):
+        out[col] = out[col] * sign
+    return out
 
 
 def _months_elapsed(agg, period, perno) -> int:
@@ -307,7 +321,7 @@ def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
 # By Entity
 # ---------------------------------------------------------------------------
 def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None,
-               single_period=False):
+               single_period=False, comments=None):
     """Net income per legal entity, on the columns every other sheet uses.
 
     Net income - revenue less spend - is the one measure that consolidates to
@@ -316,8 +330,11 @@ def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None,
     """
     hide_grid(ws)
     L = Layout(1)
-    title_band(ws, "By Entity · consolidation", meta_line(period, single_period), L.last_col)
-    headers(ws, 5, L.headers("Entity"), center_from=2, center_to=L.ncols)
+    com = get_column_letter(L.ncols + 1)
+    comments = comments or {}
+    title_band(ws, "By Entity · consolidation", meta_line(period, single_period), com)
+    headers(ws, 5, L.headers("Entity") + ["Commentary"], center_from=2,
+            center_to=L.ncols)
     _lever_echo(ws, L)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
     dim, cat = R(GLC["entity"]), R(GLC["category"])
@@ -340,16 +357,19 @@ def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None,
         ws[c["fybud"]] = var.cell(net(bud, ent, ""))
         _tail(ws, L, r, higher=True, var=var)
         band = band_fill(i)
-        for col in L.span():
+        for col in L.span() + [com]:
             ws[f"{col}{r}"].fill = band
-        ws.row_dimensions[r].height = 19
+        note_text = comments.get(ent, "")
+        kc = ws[f"{com}{r}"]; kc.value = note_text
+        kc.font = F_BODY; kc.alignment = WRAP
+        ws.row_dimensions[r].height = max(19, wrapped_height(note_text, 52))
         rows.append(r); r += 1
     last = r - 1
 
     ws.cell(row=r, column=1, value="Total").font = F_SUB
     ws.cell(row=r, column=1).alignment = LEFT
     _sum_tail(ws, L, r, rows, higher=True, var=var)
-    for col in L.span():
+    for col in L.span() + [com]:
         ws[f"{col}{r}"].fill = FILL_IVORY
         ws[f"{col}{r}"].border = TOTAL_TOP
     ws.row_dimensions[r].height = 24
@@ -359,7 +379,7 @@ def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None,
     ws.cell(row=r + 2, column=1,
             value="Each entity's net income is its revenue less its spend, which is why "
                   "the entities consolidate to the group P&L.").font = F_NOTE
-    widths(ws, L.widths(26))
+    widths(ws, L.widths(26) + [52])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 2)
     ws.freeze_panes = f"A{first}"
@@ -386,17 +406,20 @@ def _group_expense_types(values: list[str]) -> list[tuple[str, list[str]]]:
 
 
 def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
-                   single_period=False):
+                   single_period=False, comments=None):
     """Expense report by type, grouped with subtotals."""
     hide_grid(ws)
     L = Layout(1)
-    title_band(ws, "Expense Report · by expense type", meta_line(period, single_period), L.last_col)
+    com = get_column_letter(L.ncols + 1)
+    comments = comments or {}
+    title_band(ws, "Expense Report · by expense type", meta_line(period, single_period), com)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
     dim, cat = R(GLC["expense_type"]), R(GLC["category"])
     act, bud = R(GLC["actual"]), R(GLC["budget"])
     mflt, yflt = _filters(R, GLC, perno)
 
-    headers(ws, 5, L.headers("Expense type"), center_from=2, center_to=L.ncols)
+    headers(ws, 5, L.headers("Expense type") + ["Commentary"], center_from=2,
+            center_to=L.ncols)
     _lever_echo(ws, L)
 
     def write_line(r, et):
@@ -408,15 +431,20 @@ def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
         ws[c["ybud"]] = var.cell(f'=SUMIFS({bud},{crit}{yflt})')
         ws[c["fybud"]] = var.cell(f'=SUMIFS({bud},{crit})')
 
-    def dress(r, label, *, bold, fill, border=False, level=0):
+    def dress(r, label, *, bold, fill, border=False, level=0, note_text=""):
         cell = ws.cell(row=r, column=1, value=label)
         cell.font = F_SUB if bold else F_BODY
         cell.alignment = indent(level) if level else LEFT
-        for col in L.span():
+        for col in L.span() + [com]:
             cc = ws[f"{col}{r}"]; cc.fill = fill
             if border:
                 cc.border = SUBTOTAL_TOP
-        ws.row_dimensions[r].height = 21 if bold else 18
+        # Only roll-up rows carry a comment: an expense type has nothing beneath
+        # it to name, so the comment could only repeat its own row.
+        kc = ws[f"{com}{r}"]; kc.value = note_text
+        kc.font = F_SUB if bold else F_BODY; kc.alignment = WRAP
+        base = 21 if bold else 18
+        ws.row_dimensions[r].height = max(base, wrapped_height(note_text, 52))
 
     first, r, group_rows, all_rows = 6, 6, [], []
     for gname, types in groups:
@@ -433,13 +461,14 @@ def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
             group_rows.append(type_rows[0])
             continue
         _sum_tail(ws, L, r, type_rows, higher=False, var=var)
-        dress(r, gname, bold=True, fill=FILL_IVORY, border=True)
+        dress(r, gname, bold=True, fill=FILL_IVORY, border=True,
+              note_text=comments.get(gname, ""))
         group_rows.append(r); all_rows.append(r); r += 1
     last = r - 1
 
     _sum_tail(ws, L, r, group_rows, higher=False, var=var)
     dress(r, "Total expenses", bold=True, fill=FILL_IVORY)
-    for col in L.span():
+    for col in L.span() + [com]:
         ws[f"{col}{r}"].border = TOTAL_TOP
     ws.row_dimensions[r].height = 24
     all_rows.append(r)
@@ -450,7 +479,7 @@ def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
                   "operating costs, cost of sales, and non-cash and financing items. "
                   "Bold rows are group subtotals. Every line is a cost, so an overspend "
                   "is unfavourable whichever timeframe it shows up in.").font = F_NOTE
-    widths(ws, L.widths(30))
+    widths(ws, L.widths(30) + [52])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 3)
     ws.freeze_panes = f"B{first}"
@@ -460,12 +489,15 @@ def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
 # Departments & cost centres (hierarchy read from the data)
 # ---------------------------------------------------------------------------
 def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var,
-                 perno=None, single_period=False):
+                 perno=None, single_period=False, comments=None):
     hide_grid(ws)
     L = Layout(1)
-    title_band(ws, "Departments & Cost Centres · spend variance", meta_line(period, single_period), L.last_col)
-    headers(ws, 5, L.headers("Department / Cost centre"), center_from=2,
-            center_to=L.ncols)
+    com = get_column_letter(L.ncols + 1)
+    comments = comments or {}
+    title_band(ws, "Departments & Cost Centres · spend variance",
+               meta_line(period, single_period), com)
+    headers(ws, 5, L.headers("Department / Cost centre") + ["Commentary"],
+            center_from=2, center_to=L.ncols)
     _lever_echo(ws, L)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
     dep, cat = R(GLC["department"]), R(GLC["category"])
@@ -488,10 +520,15 @@ def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var,
         ws.cell(row=r, column=1).alignment = LEFT
         write_line(r, dep, dept)
         _tail(ws, L, r, higher=False, bold=True, var=var)
-        for col in L.span():
+        for col in L.span() + [com]:
             ws[f"{col}{r}"].fill = FILL_IVORY
             ws[f"{col}{r}"].border = SUBTOTAL_TOP
-        ws.row_dimensions[r].height = 22
+        # The department is the roll-up, so it is the row that can name which of
+        # its cost centres moved the total. The cost centres are leaves.
+        note_text = comments.get(dept, "")
+        kc = ws[f"{com}{r}"]; kc.value = note_text
+        kc.font = F_SUB; kc.alignment = WRAP
+        ws.row_dimensions[r].height = max(22, wrapped_height(note_text, 52))
         dept_rows.append(r); all_rows.append(r); r += 1
 
         if has_cc:
@@ -502,7 +539,7 @@ def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var,
                 write_line(r, cc, c_name)
                 _tail(ws, L, r, higher=False, var=var)
                 band = band_fill(i)
-                for col in L.span():
+                for col in L.span() + [com]:
                     ws[f"{col}{r}"].fill = band
                 ws.row_dimensions[r].height = 18
                 all_rows.append(r); r += 1
@@ -511,7 +548,7 @@ def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var,
     ws.cell(row=r, column=1, value="Total spend").font = F_SUB
     ws.cell(row=r, column=1).alignment = LEFT
     _sum_tail(ws, L, r, dept_rows, higher=False, var=var)
-    for col in L.span():
+    for col in L.span() + [com]:
         ws[f"{col}{r}"].fill = FILL_IVORY
         ws[f"{col}{r}"].border = TOTAL_TOP
     ws.row_dimensions[r].height = 24
@@ -522,7 +559,7 @@ def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var,
             value="Departments are roll-ups; cost centres are indented beneath them. "
                   "Totals sum the departments only. Revenue is excluded: this is a "
                   "spend view.").font = F_NOTE
-    widths(ws, L.widths(32))
+    widths(ws, L.widths(32) + [52])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 3)
     ws.freeze_panes = f"A{first}"
@@ -640,8 +677,38 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
     budgeted = _detect_budget(agg) if budgeted is None else bool(budgeted)
     var = Variance(budgeted)
 
+    # Year-to-date frames, at the grain the sheets report on, so the commentary
+    # can cover both timeframes and explain the flag rather than restate a column.
+    ytd = agg
+    if perno is not None and "period_no" in agg.columns:
+        ytd = agg[agg["period_no"] <= perno]
+        if ytd.empty:
+            ytd = agg
+    ytd_agg = (ytd.groupby(["account_code", "account_name", "category"], as_index=False)
+                  [["actual", "budget", "prior_year"]].sum())
+
     report = build_report(month, budgeted=budgeted)
-    comments = line_comments(report, month)
+    ytd_report = build_report(ytd_agg, budgeted=budgeted)
+    comments = (line_comments(report, month, ytd_report=ytd_report, ytd_gl=ytd_agg)
+                if budgeted else line_comments(report, month))
+
+    group_of_type = {}
+    if "expense_type" in agg.columns:
+        for gname, types in _group_expense_types(
+                [v for v in agg.get("expense_type", pd.Series(dtype=str)).unique()
+                 if v and v != "(multiple)"]):
+            group_of_type.update({t: gname for t in types})
+        for frame in (month, ytd, agg):
+            frame.loc[:, "expense_group"] = frame["expense_type"].map(group_of_type)
+
+    def rollup(parent, child, higher=False, names=None, net=False):
+        """Roll-up commentary for a sheet, when the file carries both levels."""
+        if not budgeted or parent not in agg.columns or child not in agg.columns:
+            return {}
+        m, y = (_net_frame(month), _net_frame(ytd)) if net else (month, ytd)
+        return rollup_comments(m, parent, child, higher_is_better=higher,
+                               child_names=names, ytd_detail=y)
+
 
     wb = Workbook()
     ws_gl = wb.active; ws_gl.title = "GL Input"
@@ -657,13 +724,14 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
         if vals:
             _expense_sheet(wb.create_sheet("Expense Report"), _group_expense_types(vals),
                            "GL Input", glf, gll, GLC, period, var, perno,
-                           single_period)
+                           single_period, rollup("expense_group", "expense_type"))
             order.append("Expense Report")
     if "entity" in dims:
         vals = [v for v in month["entity"].unique() if v and v != "(multiple)"]
         if len(vals) > 1:
             _by_entity(wb.create_sheet("By Entity"), sorted(vals), "GL Input",
-                       glf, gll, GLC, period, var, perno, single_period)
+                       glf, gll, GLC, period, var, perno, single_period,
+                       rollup("entity", "department", higher=True, net=True))
             order.append("By Entity")
     if "department" in dims:
         spend = month[month["category"] != "Revenue"]
@@ -676,7 +744,8 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
         if hierarchy:
             _departments(wb.create_sheet("Departments & CCs"), hierarchy, "GL Input",
                          glf, gll, GLC, period, has_cc and any(hierarchy.values()),
-                         var, perno, single_period)
+                         var, perno, single_period,
+                         rollup("department", "cost_centre"))
             order.append("Departments & CCs")
 
     _drivers(wb.create_sheet("Drivers"), agg, "GL Input", glf, gll, GLC, period,
