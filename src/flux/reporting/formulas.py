@@ -124,6 +124,16 @@ class Layout:
     def pct_cols(self) -> list[str]:
         return [getattr(self, key) for key in self.PCTS]
 
+    def frozen(self, first_row: int) -> str:
+        """The freeze-pane anchor: the label columns and the header rows.
+
+        Freezing rows alone was enough when a sheet was seven columns wide. At
+        fifteen it is not: scrolling right to the run rate took the row labels
+        off the screen and left a reader looking at figures with nothing to say
+        which line they belonged to.
+        """
+        return f"{get_column_letter(self.label_cols + 1)}{first_row}"
+
     def span(self) -> list[str]:
         """Every column letter on the sheet, label columns included."""
         return [get_column_letter(c) for c in range(1, self.ncols + 1)]

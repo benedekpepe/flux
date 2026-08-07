@@ -270,6 +270,11 @@ which is not on the row. On a leaf row the comment could only restate the
 variance and percentage in the columns beside it, so the Drivers sheet and the
 cost-centre lines carry none.
 
+Grand totals count as roll-ups: they have the whole sheet underneath them and
+are the row a reader looks at first. A spend sheet's total comment is built on a
+revenue-free frame, matching the figures on the row — otherwise it agrees with
+the individual rows by luck and contradicts the total.
+
 Every roll-up gets one, not only the material ones: a blank cell is ambiguous —
 nothing moved, or nothing was generated? — and "neither timeframe clears the
 floors" is an answer. The Flag column is what points a reader at the rows worth
@@ -357,7 +362,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 184 checks` means everything is wired up correctly.
+`PASSED all 197 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -418,7 +423,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**184 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**197 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

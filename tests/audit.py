@@ -607,6 +607,34 @@ def test_workbooks() -> None:
             leaf = ws.cell(row=leaf_row, column=ws.max_column).value
             check(f"Demo pack: '{name}' leaves its leaf rows uncommented",
                   leaf in (None, ""), str(leaf)[:60])
+    # The grand total is a roll-up over the whole sheet, and the row a reader
+    # looks at first. It was the one blank cell in a commented column.
+    for name, label in (("Expense Report", "Total expenses"),
+                        ("Departments & CCs", "Total spend"),
+                        ("By Entity", "Consolidated")):
+        ws = wb[name]
+        row = next(r for r in range(6, ws.max_row + 1)
+                   if str(ws.cell(row=r, column=1).value).strip() == label)
+        text = ws.cell(row=row, column=ws.max_column).value or ""
+        check(f"Demo pack: '{name}' comments its total row", text.startswith("YTD"),
+              text[:60])
+        # And the comment has to agree with the row: a spend sheet excludes
+        # revenue, so a comment built on the unfiltered frame contradicts it.
+        cols = _header_columns(ws)
+        from openpyxl.utils import column_index_from_string
+        var = ws.cell(row=row,
+                      column=column_index_from_string(cols["YTD Var"])).value
+        check(f"Demo pack: '{name}' total comment matches its own YTD variance",
+              isinstance(var, str) and var.startswith("="),
+              "formula expected; the workbook is not recalculated here")
+
+    # Rows scroll, labels should not: every sheet freezes its label columns as
+    # well as its header, or scrolling to the run rate loses the row names.
+    for name in wb.sheetnames:
+        check(f"Demo pack: '{name}' freezes its label column",
+              str(wb[name].freeze_panes or "")[:1] not in ("A", ""),
+              str(wb[name].freeze_panes))
+
     pnl_comment = wb["P&L Report"].cell(row=11, column=wb["P&L Report"].max_column).value or ""
     check("Demo pack: the P&L commentary covers the year to date, not just the month",
           pnl_comment.startswith("YTD"), pnl_comment[:80])

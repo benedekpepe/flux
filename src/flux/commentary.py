@@ -463,6 +463,31 @@ def rollup_comments(
     return comments
 
 
+def total_comment(
+    detail: pd.DataFrame,
+    child: str,
+    materiality: MaterialityRule | None = None,
+    higher_is_better: bool = False,
+    child_names: dict | None = None,
+    ytd_detail: pd.DataFrame | None = None,
+) -> str:
+    """The same commentary for a sheet's grand-total row.
+
+    A total is a roll-up like any other - it has the whole sheet underneath it -
+    and it is the row a reader looks at first. Leaving it as the one blank cell
+    in a commented column reads as a gap rather than a decision.
+    """
+    label = "\u0000total"          # a key no real dimension value can collide with
+    frames = []
+    for frame in (detail, ytd_detail):
+        if frame is None:
+            frames.append(None); continue
+        out = frame.copy(); out[label] = label
+        frames.append(out)
+    return rollup_comments(frames[0], label, child, materiality, higher_is_better,
+                           child_names, frames[1]).get(label, "")
+
+
 def generate_commentary(
     report: pd.DataFrame,
     gl: pd.DataFrame,

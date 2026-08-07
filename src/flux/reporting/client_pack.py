@@ -25,7 +25,7 @@ from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 
 from ..coa import PNL_STRUCTURE, CATEGORY_FAVOURABLE, FAV_HIGHER, EXPENSE_GROUPS
-from ..commentary import line_comments, rollup_comments
+from ..commentary import line_comments, rollup_comments, total_comment
 from ..engine import build_report, has_budget as _detect_budget
 from .styling import (
     F_BODY, F_SMALL, F_SUB, F_INPUT, F_KPI_LABEL, F_KPI_VALUE, F_NOTE, F_META, F_KPI_DELTA,
@@ -109,7 +109,7 @@ def _gl_input(ws, agg, period, dims, budgeted=True):
     if not budgeted:
         note(ws, last + 2, NO_BUDGET_NOTE)
     quiet_indicators(ws, 4, last)
-    ws.freeze_panes = f"A{first}"
+    ws.freeze_panes = f"B{first}"
     return first, last, letters
 
 
@@ -128,6 +128,9 @@ def _filters(R, GLC, perno):
         return (f',{R(GLC["period_no"])},{perno}',
                 f',{R(GLC["period_no"])},"<={perno}"')
     return "", ""
+
+
+TOTAL_KEY = "\u0000total"
 
 
 def _net_frame(frame):
@@ -314,7 +317,7 @@ def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
     if single_period:
         note(ws, footnote, SINGLE_PERIOD_NOTE)
     quiet_indicators(ws, 4, last + 3)
-    ws.freeze_panes = f"A{first}"
+    ws.freeze_panes = L.frozen(first)
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +375,10 @@ def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None,
     for col in L.span() + [com]:
         ws[f"{col}{r}"].fill = FILL_IVORY
         ws[f"{col}{r}"].border = TOTAL_TOP
-    ws.row_dimensions[r].height = 24
+    total_text = comments.get(TOTAL_KEY, "")
+    kc = ws[f"{com}{r}"]; kc.value = total_text
+    kc.font = F_SUB; kc.alignment = WRAP
+    ws.row_dimensions[r].height = max(24, wrapped_height(total_text, 52))
     rows.append(r)
 
     _report_cf(ws, L, first, r, rows, [], var=var)
@@ -382,7 +388,7 @@ def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None,
     widths(ws, L.widths(26) + [52])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 2)
-    ws.freeze_panes = f"A{first}"
+    ws.freeze_panes = L.frozen(first)
 
 
 def _group_expense_types(values: list[str]) -> list[tuple[str, list[str]]]:
@@ -470,7 +476,10 @@ def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
     dress(r, "Total expenses", bold=True, fill=FILL_IVORY)
     for col in L.span() + [com]:
         ws[f"{col}{r}"].border = TOTAL_TOP
-    ws.row_dimensions[r].height = 24
+    total_text = comments.get(TOTAL_KEY, "")
+    kc = ws[f"{com}{r}"]; kc.value = total_text
+    kc.font = F_SUB; kc.alignment = WRAP
+    ws.row_dimensions[r].height = max(24, wrapped_height(total_text, 52))
     all_rows.append(r)
 
     _report_cf(ws, L, first, r, [], all_rows, var=var)
@@ -482,7 +491,7 @@ def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
     widths(ws, L.widths(30) + [52])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 3)
-    ws.freeze_panes = f"B{first}"
+    ws.freeze_panes = L.frozen(first)
 
 
 # ---------------------------------------------------------------------------
@@ -551,7 +560,10 @@ def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var,
     for col in L.span() + [com]:
         ws[f"{col}{r}"].fill = FILL_IVORY
         ws[f"{col}{r}"].border = TOTAL_TOP
-    ws.row_dimensions[r].height = 24
+    total_text = comments.get(TOTAL_KEY, "")
+    kc = ws[f"{com}{r}"]; kc.value = total_text
+    kc.font = F_SUB; kc.alignment = WRAP
+    ws.row_dimensions[r].height = max(24, wrapped_height(total_text, 52))
     all_rows.append(r)
 
     _report_cf(ws, L, first, r, [], all_rows, var=var)
@@ -562,7 +574,7 @@ def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var,
     widths(ws, L.widths(32) + [52])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 3)
-    ws.freeze_panes = f"A{first}"
+    ws.freeze_panes = L.frozen(first)
 
 
 # ---------------------------------------------------------------------------
@@ -618,7 +630,7 @@ def _drivers(ws, agg, gl, glf, gll, GLC, period, var, perno=None,
     widths(ws, L.widths(12, 30, 12))
     fit_text_columns(ws, ["B", "C"], first, last)
     quiet_indicators(ws, 4, last)
-    ws.freeze_panes = f"A{first}"
+    ws.freeze_panes = L.frozen(first)
 
 
 # ---------------------------------------------------------------------------
@@ -701,13 +713,26 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
         for frame in (month, ytd, agg):
             frame.loc[:, "expense_group"] = frame["expense_type"].map(group_of_type)
 
-    def rollup(parent, child, higher=False, names=None, net=False):
-        """Roll-up commentary for a sheet, when the file carries both levels."""
+    def rollup(parent, child, higher=False, names=None, net=False, spend=False):
+        """Roll-up commentary for a sheet, when the file carries both levels.
+
+        `spend` drops revenue, because the expense and department sheets exclude
+        it from every figure on them; `net` signs revenue against spend, because
+        the entity sheet reports net income. Getting either wrong produces a
+        comment that contradicts the row it sits beside.
+        """
         if not budgeted or parent not in agg.columns or child not in agg.columns:
             return {}
-        m, y = (_net_frame(month), _net_frame(ytd)) if net else (month, ytd)
-        return rollup_comments(m, parent, child, higher_is_better=higher,
-                               child_names=names, ytd_detail=y)
+        m, y = month, ytd
+        if spend:
+            m, y = m[m["category"] != "Revenue"], y[y["category"] != "Revenue"]
+        if net:
+            m, y = _net_frame(m), _net_frame(y)
+        out = rollup_comments(m, parent, child, higher_is_better=higher,
+                              child_names=names, ytd_detail=y)
+        out[TOTAL_KEY] = total_comment(m, child, higher_is_better=higher,
+                                       child_names=names, ytd_detail=y)
+        return out
 
 
     wb = Workbook()
@@ -724,7 +749,8 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
         if vals:
             _expense_sheet(wb.create_sheet("Expense Report"), _group_expense_types(vals),
                            "GL Input", glf, gll, GLC, period, var, perno,
-                           single_period, rollup("expense_group", "expense_type"))
+                           single_period,
+                           rollup("expense_group", "expense_type", spend=True))
             order.append("Expense Report")
     if "entity" in dims:
         vals = [v for v in month["entity"].unique() if v and v != "(multiple)"]
@@ -745,7 +771,7 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
             _departments(wb.create_sheet("Departments & CCs"), hierarchy, "GL Input",
                          glf, gll, GLC, period, has_cc and any(hierarchy.values()),
                          var, perno, single_period,
-                         rollup("department", "cost_centre"))
+                         rollup("department", "cost_centre", spend=True))
             order.append("Departments & CCs")
 
     _drivers(wb.create_sheet("Drivers"), agg, "GL Input", glf, gll, GLC, period,

@@ -31,7 +31,7 @@ from openpyxl.utils import get_column_letter
 
 from ..coa import (PNL_STRUCTURE, CATEGORY_FAVOURABLE, FAV_HIGHER, COST_CENTRES,
                    SPEND_DEPARTMENTS, DEPARTMENT_COST_CENTRES, EXPENSE_GROUPS)
-from ..commentary import line_comments, rollup_comments
+from ..commentary import line_comments, rollup_comments, total_comment
 from ..engine import build_report
 from .styling import (
     F_HEAD, F_BODY, F_SMALL, F_SUB, F_INPUT, F_KPI_LABEL, F_KPI_VALUE, F_NOTE,
@@ -215,7 +215,8 @@ def _write_source_sheet(ws, df, spec, title, meta, footnote) -> tuple[int, int]:
 
     ws.cell(row=last + 2, column=1, value=footnote).font = F_NOTE
     quiet_indicators(ws, 4, last)
-    ws.freeze_panes = f"A{first}"
+    # Input sheets are wide too: hold the first column as well as the header.
+    ws.freeze_panes = f"B{first}"
     return first, last
 
 
@@ -241,6 +242,7 @@ def _write_budget(ws, bud, period) -> tuple[int, int]:
 
 
 # Cost centres are keyed by code on the sheet but read by name in prose.
+TOTAL_KEY = "\u0000total"
 CC_NAMES = {code: name for _dept, code, name in COST_CENTRES}
 
 # The expense groups are a constant, not a column, so a roll-up commentary over
@@ -253,6 +255,17 @@ def _with_group(detail):
     out = detail.copy()
     out["expense_group"] = out["expense_type"].map(_GROUP_OF_TYPE).fillna("Other expense types")
     return out
+
+
+def _spend_detail(detail):
+    """The detail frame with revenue dropped.
+
+    The expense and department sheets are spend views: they exclude revenue from
+    every figure on them. A commentary built on the unfiltered frame agrees with
+    the individual rows by luck - the departments that book revenue are not on
+    the sheet - and then contradicts the grand total, which sums everything.
+    """
+    return detail[detail["category"] != "Revenue"]
 
 
 def _net_detail(detail):
@@ -422,7 +435,7 @@ def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report,
 
     widths(ws, L.widths(26) + [COMMENT_WIDTH])
     quiet_indicators(ws, 4, last)
-    ws.freeze_panes = f"A{first}"
+    ws.freeze_panes = L.frozen(first)
 
 
 # ===========================================================================
@@ -505,7 +518,10 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period,
     for col in L.span() + [com]:
         ws[f"{col}{r}"].fill = FILL_IVORY
         ws[f"{col}{r}"].border = TOTAL_TOP
-    ws.row_dimensions[r].height = 24
+    total_text = comments.get(TOTAL_KEY, "")
+    kc = ws[f"{com}{r}"]; kc.value = total_text
+    kc.font = F_SUB; kc.alignment = WRAP
+    ws.row_dimensions[r].height = max(24, wrapped_height(total_text, COMMENT_WIDTH))
     all_rows.append(r)
 
     _report_cf(ws, L, first, r, [], all_rows)
@@ -519,7 +535,7 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period,
     widths(ws, L.widths(28) + [COMMENT_WIDTH])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 2)
-    ws.freeze_panes = f"B{first}"
+    ws.freeze_panes = L.frozen(first)
 
 
 # ===========================================================================
@@ -584,7 +600,10 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period,
     for col in L.span() + [com]:
         ws[f"{col}{r}"].fill = FILL_IVORY
         ws[f"{col}{r}"].border = TOTAL_TOP
-    ws.row_dimensions[r].height = 24
+    total_text = comments.get(TOTAL_KEY, "")
+    kc = ws[f"{com}{r}"]; kc.value = total_text
+    kc.font = F_SUB; kc.alignment = WRAP
+    ws.row_dimensions[r].height = max(24, wrapped_height(total_text, COMMENT_WIDTH))
     rows.append(r)
 
     # Ranges run to `r`, the total row, not `last`: a total carries the same
@@ -597,7 +616,7 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period,
     widths(ws, L.widths(18) + [COMMENT_WIDTH])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 2)
-    ws.freeze_panes = f"A{first}"
+    ws.freeze_panes = L.frozen(first)
 
 
 # ===========================================================================
@@ -680,7 +699,10 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period,
     for col in L.span() + [com]:
         ws[f"{col}{r}"].fill = FILL_IVORY
         ws[f"{col}{r}"].border = TOTAL_TOP
-    ws.row_dimensions[r].height = 24
+    total_text = comments.get(TOTAL_KEY, "")
+    kc = ws[f"{com}{r}"]; kc.value = total_text
+    kc.font = F_SUB; kc.alignment = WRAP
+    ws.row_dimensions[r].height = max(24, wrapped_height(total_text, COMMENT_WIDTH))
     all_rows.append(r)
 
     _report_cf(ws, L, first, r, [], all_rows)
@@ -692,7 +714,7 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period,
     widths(ws, L.widths(32) + [COMMENT_WIDTH])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 3)
-    ws.freeze_panes = f"A{first}"
+    ws.freeze_panes = L.frozen(first)
 
 
 # ===========================================================================
@@ -748,7 +770,7 @@ def _write_drivers(ws, agg, gl, glf, gll, bud, budf, budl, period) -> None:
     widths(ws, L.widths(12, 30, 12))
     fit_text_columns(ws, ["B", "C"], first, last)
     quiet_indicators(ws, 4, last)
-    ws.freeze_panes = f"A{first}"
+    ws.freeze_panes = L.frozen(first)
 
 # ===========================================================================
 def build_demo_pack(period: str, out_path: str | Path, seed: int = 42) -> Path:
@@ -778,13 +800,22 @@ def build_demo_pack(period: str, out_path: str | Path, seed: int = 42) -> Path:
     # The commentary covers both timeframes, so it can explain the flag beside
     # it rather than restating one of the columns.
     comments = line_comments(report, agg, ytd_report=ytd_report, ytd_gl=ytd_agg)
-    dept_comments = rollup_comments(detail, "department", "cost_centre",
-                                    child_names=CC_NAMES, ytd_detail=ytd_detail)
+    spend, ytd_spend = _spend_detail(detail), _spend_detail(ytd_detail)
+    dept_comments = rollup_comments(spend, "department", "cost_centre",
+                                    child_names=CC_NAMES, ytd_detail=ytd_spend)
     ent_comments = rollup_comments(_net_detail(detail), "entity", "department",
                                    higher_is_better=True,
                                    ytd_detail=_net_detail(ytd_detail))
-    exp_comments = rollup_comments(_with_group(detail), "expense_group",
-                                   "expense_type", ytd_detail=_with_group(ytd_detail))
+    exp_comments = rollup_comments(_with_group(spend), "expense_group",
+                                   "expense_type", ytd_detail=_with_group(ytd_spend))
+    # The grand totals are roll-ups too, over every row on their sheet.
+    dept_comments["\u0000total"] = total_comment(
+        spend, "department", ytd_detail=ytd_spend)
+    ent_comments["\u0000total"] = total_comment(
+        _net_detail(detail), "entity", higher_is_better=True,
+        ytd_detail=_net_detail(ytd_detail))
+    exp_comments["\u0000total"] = total_comment(
+        _with_group(spend), "expense_group", ytd_detail=_with_group(ytd_spend))
     dept_var = department_variances(detail)
     ent_var = entity_variances(detail)
 
