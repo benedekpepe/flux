@@ -25,7 +25,6 @@ from flux import ingest
 from flux.ingest import (match_columns, _content_detect, apply_mapping,
                          CANONICAL, REQUIRED)
 from flux.coa import EXPENSE_TYPES
-from flux.reporting.demo_pack import demo_analysis_blocks
 from flux.engine import build_report, has_budget
 from flux.reporting import build_client_pack, build_demo_pack, build_pptx_pack
 from flux.synthetic_data import (generate_budget_year, generate_month,
@@ -55,7 +54,16 @@ st.caption("Turn a general ledger into a management P&L with variance analysis, 
 
 SAMPLE_PERIOD = "2025-06"
 def _demo_blocks():
-    """The sample company's findings, shared by its workbook and its deck."""
+    """The sample company's findings, shared by its workbook and its deck.
+
+    Imported here rather than at module scope: the analysis slide is one extra
+    on one tab, and a missing helper used to stop the whole app from starting.
+    A deck without the slide is a far better failure than a blank page.
+    """
+    try:
+        from flux.reporting import demo_analysis_blocks
+    except ImportError:
+        return None
     return demo_analysis_blocks(SAMPLE_PERIOD)
 
 

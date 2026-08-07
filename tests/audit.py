@@ -1287,6 +1287,15 @@ def test_edges() -> None:
     check("app.py parses", _parses(source))
     check("app.py uses no browser-only Streamlit APIs",
           "use_container_width" not in source)
+    # A missing optional helper must not stop the app from starting: the whole
+    # page went down over one extra slide on one tab.
+    check("app.py imports only the package's own promises at module scope",
+          "from flux.reporting.demo_pack import" not in source,
+          "app.py reaches into a module rather than the package")
+    from flux import reporting
+    check("Anything the app imports is exported by the package",
+          all(hasattr(reporting, n) for n in reporting.__all__),
+          str([n for n in reporting.__all__ if not hasattr(reporting, n)]))
 
 
 def _parses(source: str) -> bool:
