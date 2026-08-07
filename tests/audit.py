@@ -33,6 +33,7 @@ import traceback
 from pathlib import Path
 
 import pandas as pd
+from openpyxl.utils import get_column_letter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -1104,6 +1105,43 @@ def test_edges() -> None:
     # The budget-year generator must cover twelve months.
     by = generate_budget_year()
     check("The budget covers a full year", by["period"].nunique() == 12)
+
+    # The template is the recommended path, so it has to survive its own
+    # ingestion - and the example sheet has to be an example of something. It
+    # shipped promising rows that were never written, because the generator's
+    # import failed and a bare except swallowed it.
+    tpl = Path(__file__).resolve().parents[1] / "data" / "input_template.xlsx"
+    check("The input template exists", tpl.exists())
+    if tpl.exists():
+        tstd, _tr, _ti = ingest.ingest(tpl)
+        check("The template's Input sheet ingests cleanly",
+              tstd is not None and len(tstd) == 3,
+              "none" if tstd is None else str(len(tstd)))
+        twb = _load(tpl)
+        example = twb["Example - full GL export"]
+        check("The example ledger sheet actually carries rows",
+              example.max_row > 6, str(example.max_row))
+        check("The example sheet's banner spans its data",
+              any(str(m).endswith(f"{get_column_letter(example.max_column)}1")
+                  for m in example.merged_cells.ranges),
+              str([str(m) for m in example.merged_cells.ranges]))
+        raw = ingest.load_file(tpl, sheet_name="Example - full GL export")
+        estd, _er, _ei = ingest.ingest(raw)
+        check("The example export is a ledger with revenue in it",
+              estd is not None and line(build_report(estd), "Revenue").actual > 0,
+              "no revenue in the example")
+
+    # A budget-only file is a legitimate upload: the engine needs an amount,
+    # not specifically the actual.
+    budget_only = pd.DataFrame({
+        "Account code": ["4100", "6110"],
+        "Account name": ["Subscription revenue", "Advertising & digital"],
+        "Budget": [500_000.0, 120_000.0],
+    })
+    bstd, _br, _bi = ingest.ingest(budget_only)
+    check("A budget-only file is accepted",
+          bstd is not None and close(bstd["budget"].sum(), 620_000.0),
+          "rejected" if bstd is None else str(bstd["budget"].sum()))
 
     app = Path(__file__).resolve().parents[1] / "app.py"
     check("app.py exists", app.exists())

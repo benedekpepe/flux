@@ -11,6 +11,8 @@ Two sheets:
 from __future__ import annotations
 from pathlib import Path
 
+import pandas as pd
+
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.worksheet.datavalidation import DataValidation
@@ -48,8 +50,8 @@ COLUMNS = [
     ("entity", "Entity", False, "Legal entity or company code. With more than one, the pack adds a consolidation sheet."),
     ("department", "Department", False, "The roll-up level, e.g. Engineering."),
     ("cost_centre", "Cost centre", False, "The cost centre inside that department, in your own coding scheme, e.g. CC1200, EN40300 or 4100-02. Must belong to the department in the same row."),
-    ("actual", "Actual", True, "Actual amount for the reporting period."),
-    ("budget", "Budget", False, "Budgeted amount for the same period. Leave the column out if the plan lives in a separate file; you can upload that as a second file."),
+    ("actual", "Actual", "amount", "Actual amount for the reporting period. Fill either this or Budget - a budget-only file is a valid upload, and the app takes one as a second file."),
+    ("budget", "Budget", "amount", "Budgeted amount for the same period. Fill either this or Actual. Leave the column out entirely if the plan lives in a separate file."),
     ("prior_year", "Prior year actual", False, "The same period last year, actual (not last year's budget)."),
 ]
 
@@ -84,7 +86,8 @@ def build(path: Path) -> Path:
     ws.row_dimensions[1].height = 34
 
     ws.merge_cells(f"A2:{last}2")
-    ws["A2"] = "One row per account for one reporting period. Delete the three example rows below."
+    ws["A2"] = ("One row per account for one reporting period. Delete the three example "
+                "rows below.  * required  \u2020 fill either Actual or Budget")
     ws["A2"].font = Font(name=FONT, size=9, color=MUTE)
     ws["A2"].alignment = LEFT
     ws.row_dimensions[2].height = 16
@@ -96,7 +99,11 @@ def build(path: Path) -> Path:
 
     hrow = 5
     for i, (key, label, required, _) in enumerate(COLUMNS, start=1):
-        cell = ws.cell(row=hrow, column=i, value=label + (" *" if required else ""))
+        # "*" is required outright; "†" is one-of-these - marking Actual as
+        # required outright was wrong, because the engine only needs an amount
+        # and a budget-only file is a legitimate upload.
+        mark = {True: " *", "amount": " \u2020"}.get(required, "")
+        cell = ws.cell(row=hrow, column=i, value=label + mark)
         cell.font = F_HEAD
         cell.fill = FILL_NAVY
         cell.alignment = CENTER if i >= 9 else LEFT
@@ -179,8 +186,10 @@ def build(path: Path) -> Path:
     rr = 9
     for key, label, required, note in COLUMNS:
         ws2.cell(row=rr, column=1, value=label).font = F_BODY
-        c2 = ws2.cell(row=rr, column=2, value="Required" if required else "Optional")
-        c2.font = Font(name=FONT, size=10, bold=required, color=NAVY if required else MUTE)
+        wording = {True: "Required", "amount": "Actual or Budget"}.get(required, "Optional")
+        c2 = ws2.cell(row=rr, column=2, value=wording)
+        c2.font = Font(name=FONT, size=10, bold=bool(required),
+                       color=NAVY if required else MUTE)
         c3 = ws2.cell(row=rr, column=3, value=note)
         c3.font = F_BODY
         c3.alignment = WRAP
@@ -230,26 +239,42 @@ def build(path: Path) -> Path:
     ws3 = wb.create_sheet("Example - full GL export")
     ws3.sheet_view.showGridLines = False
     ws3.sheet_properties.tabColor = NAVY
+    # The package lives under src/, not beside this script. Importing from
+    # `scripts/` failed, the bare except swallowed it, and the sheet shipped
+    # with a sentence promising rows that were never written. A missing example
+    # is not worth a crash, but it is worth saying out loud.
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from synthetic_data import generate_transactions
-        sample = generate_transactions("2025-06").head(12)
-    except Exception:
+        from flux.synthetic_data import generate_transactions
+        txns = generate_transactions("2025-06")
+        # A spread across the categories, not the first twelve rows: taken in
+        # file order the sample was all cost lines, so the sheet illustrated a
+        # ledger with no revenue in it.
+        picks = [g.head(3) for _cat, g in txns.groupby("category", sort=False)]
+        sample = (pd.concat(picks).sort_values("doc_no").reset_index(drop=True)
+                  if picks else txns.head(12))
+    except Exception as exc:  # pragma: no cover - the sheet degrades, loudly
+        print(f"WARNING: example ledger rows not generated ({exc!r})")
         sample = None
 
-    ws3.merge_cells("A1:H1")
+    # The bands have to span the data, not a guessed eight columns: the example
+    # is a real export and runs to three dozen fields, so a title merged to H
+    # was cut off mid-word and the intro clipped at its own row height.
+    span = len(sample.columns) if sample is not None else 8
+    last = get_column_letter(span)
+    ws3.merge_cells(f"A1:{last}1")
     ws3["A1"] = "Example - what a full ledger export looks like"
     ws3["A1"].font = F_TITLE
     ws3["A1"].alignment = LEFT
-    for c in range(1, 9):
+    for c in range(1, span + 1):
         ws3.cell(row=1, column=c).fill = FILL_NAVY
     ws3.row_dimensions[1].height = 34
-    ws3.merge_cells("A2:H2")
-    for c in range(1, 9):
+    ws3.merge_cells(f"A2:{last}2")
+    for c in range(1, span + 1):
         ws3.cell(row=2, column=c).fill = FILL_BRASS
     ws3.row_dimensions[2].height = 3
-    ws3.merge_cells("A4:H4")
+    ws3.merge_cells(f"A4:{last}4")
     ws3["A4"] = ("You do not need to trim your export down to the Input sheet. Upload the "
                  "extract exactly as your system produces it - document numbers, texts, "
                  "dates, tax codes and any other fields are simply ignored. Flux only needs "
@@ -257,7 +282,12 @@ def build(path: Path) -> Path:
                  "category. The rows below are an illustrative extract.")
     ws3["A4"].alignment = WRAP
     ws3["A4"].font = F_BODY
-    ws3.row_dimensions[4].height = 52
+    # Excel does not auto-fit a merged cell, so the height is estimated from the
+    # text and the width it has to wrap inside. At eight columns the note ran to
+    # five lines in a box built for four.
+    chars_per_line = max(40, span * 11)
+    lines = max(1, -(-len(ws3["A4"].value) // chars_per_line))
+    ws3.row_dimensions[4].height = max(34, 8 + 15 * lines)
 
     if sample is not None:
         hrow = 6
