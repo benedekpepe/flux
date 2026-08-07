@@ -405,8 +405,11 @@ def _year_to_date(prs, ytd_report, month_report, months, period, budgeted):
     ytd_labels.font.size = Pt(9)
     ytd_labels.font.name = FONT
     ytd_labels.font.bold = True
-    ytd_labels.font.color.rgb = WHITE
-    ytd_labels.position = XL_LABEL_POSITION.INSIDE_END
+    # Outside the column, in ink. A category can be a rounding error against the
+    # others - Other expenses is a couple of hundred euro on a sixty-thousand
+    # axis - and a label placed inside that sliver is white text on white paper.
+    ytd_labels.font.color.rgb = INK
+    ytd_labels.position = XL_LABEL_POSITION.OUTSIDE_END
     for series, colour in zip(chart.series, (SLATE, BRASS)):
         series.format.fill.solid()
         series.format.fill.fore_color.rgb = colour
@@ -553,17 +556,21 @@ def _drivers(prs, gl, materiality, period, budgeted):
 
     unfav = material[material.fav_unfav == "U"]["mag"].sum()
     fav = material[material.fav_unfav == "F"]["mag"].sum()
+    # Spell the total out rather than leaving a number to be taken on trust.
+    parts = " + ".join(_mag(v) for v in material["mag"])
+    total = (f"The {len(material)} bars shown add to {_mag(unfav + fav)}: "
+             f"{parts}.")
+    split = (f"{_mag(unfav)} unfavourable, {_mag(fav)} favourable."
+             if fav else f"All {_mag(unfav)} of it unfavourable.")
+
     runs = [("MATERIALITY", 11, True, BRASS), None,
             (f"{materiality.abs_threshold:,.0f} EUR and "
              f"{materiality.pct_threshold:.0%}", 17, True, NAVY), None,
             ("An account is flagged only when it clears both floors, so a large "
              "percentage on a small base does not crowd out the real movers.",
              11, False, INK), None,
-            (f"{len(material)} account(s) qualified", 12, True, NAVY), None,
-            ("Their variances add up to:", 11, False, MUTE), None,
-            (f"Unfavourable  {_mag(unfav)}", 12, False, RED), None,
-            (f"Favourable  {_mag(fav)}" if fav else "Favourable  none",
-             12, False, GREEN if fav else MUTE), None,
+            (total, 11, False, INK), None,
+            (split, 12, True, RED if not fav else NAVY), None,
             ("LARGEST SINGLE MOVER", 11, True, BRASS), None,
             (str(material.iloc[0]["account_name"]), 13, True, NAVY), None,
             (f"{_signed(material.iloc[0]['var_bud'])}  "
