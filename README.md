@@ -207,6 +207,43 @@ and flag all of them. The run rate is the exception: it is built from actuals an
 the months lever alone, so it still projects. Prior-year actuals are carried on
 the GL Input sheet, beside the figures they belong to.
 
+## Reading a chart of accounts it has never seen
+
+The account code alone cannot say what a line is. `5` opens material cost in a
+US chart, every cost by nature in a Hungarian one, and an expense account in
+SAP; `8` is revenue in SAP and a cost in Hungary. Reading the first digit and
+hoping reported Hungarian revenue as an operating expense and swapped SAP's
+revenue and materials — a finished-looking pack with the bottom line inverted,
+which is the worst way to be wrong.
+
+So two independent readings are taken and made to agree:
+
+| Reading | From |
+| --- | --- |
+| **Account name** | keywords in English and Hungarian, deliberately narrow — it returns nothing when unsure |
+| **Account code** | candidate chart styles: `4-5-6-7`, SAP, Hungarian statutory |
+
+Each chart style is scored on how often it agrees with the names. The winner has
+to clear a floor, so an unrecognised chart falls back to the names rather than
+being forced into a shape it is not. Whichever way it goes, **the pack says what
+it based the reading on** — the chart it recognised and how much of the file
+corroborates it, every account where the name and the code disagreed, and the
+loud cases: no revenue at all, or an account whose name reads as revenue and was
+classified otherwise.
+
+A confident, fully corroborated match says nothing, because a warning that always
+fires is a warning nobody reads.
+
+### Expense types, where the file has none
+
+The expense report needs a natural classification the ledger usually does not
+carry as a column. Where there is none, it is inferred from the account names
+against the same seventeen types the demo uses, so an inferred file groups
+exactly like a native one. Anything unrecognised lands under *Other expenses* —
+named, not blank, so the line still appears on a spend view rather than
+vanishing from it. The pack reports how many accounts were recognised and how
+many were not.
+
 ## Reading real ledger files
 
 A real export writes a negative in at least four ways, and getting any of them
@@ -366,7 +403,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 205 checks` means everything is wired up correctly.
+`PASSED all 224 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -427,7 +464,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**205 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**224 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

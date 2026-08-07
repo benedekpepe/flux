@@ -222,7 +222,86 @@ def test_ingestion() -> None:
     check("Department resolved from 'Dept'", mapped["department"] == "Dept")
     check("Category inferred from the account-code range",
           list(std["category"]) == ["Revenue", "Revenue", "COGS", "OpEx", "OpEx"])
-    check("A clean file raises no issues", not issues, str(issues))
+    check("The recognised chart of accounts is named",
+          std.attrs["category_inference"]["style"] == "4-5-6-7",
+          str(std.attrs["category_inference"]))
+    # The classification and expense-type notes describe a guess the user has
+    # to see; they are not mapping problems, which is what this asserts.
+    inferred = ("classif", "chart of accounts", "expense type", "expense-type")
+    check("A clean file raises no mapping issues",
+          not [i for i in issues if not any(k in i.lower() for k in inferred)],
+          str(issues))
+    check("An inferred expense type is declared, never silent",
+          any("inferred from the account names" in i for i in issues), str(issues))
+
+    # A misread chart of accounts is the one failure that produces a
+    # finished-looking pack with the bottom line inverted, so each of these
+    # checks that the classification survives a chart the engine was not
+    # designed around, and that the file says what it based the reading on.
+    charts = {
+        "Hungarian": (
+            ["911", "912", "511", "541", "551", "521", "871"],
+            ["Belfoldi ertekesites arbevetele", "Exportertekesites arbevetele",
+             "Anyagkoltseg", "Berkoltseg", "Bergarulek",
+             "Igenybe vett szolgaltatasok", "Fizetett kamat"],
+            ["Revenue", "Revenue", "COGS", "OpEx", "OpEx", "OpEx", "Other"]),
+        "SAP": (
+            ["800000", "800100", "400000", "430000", "470000", "480000"],
+            ["Sales revenue domestic", "Sales revenue export", "Raw materials",
+             "Personnel expense", "Occupancy rent", "Depreciation"],
+            ["Revenue", "Revenue", "COGS", "OpEx", "OpEx", "Other"]),
+        "4-5-6-7": (
+            ["4000", "5000", "6100", "7000"],
+            ["Product revenue", "Materials", "Marketing spend", "Interest paid"],
+            ["Revenue", "COGS", "OpEx", "Other"]),
+    }
+    for style, (codes, names, want) in charts.items():
+        frame = pd.DataFrame({"Account": codes, "Account name": names,
+                              "Actual": [100_000.0] * len(codes)})
+        got, info = ingest.infer_categories(codes, names)
+        check(f"{style} chart of accounts is classified correctly", got == want,
+              f"{got}")
+        check(f"{style} chart of accounts is recognised by name",
+              info["style"] == style, str(info["style"]))
+        std_c, _r, _i = ingest.ingest(frame)
+        check(f"{style} revenue reaches the P&L",
+              line(build_report(std_c), "Revenue").actual > 0, style)
+
+    # A chart nobody recognises must fall back to the names, not to silence.
+    odd_codes = ["A10", "A20", "B10", "C10"]
+    odd_names = ["Widget sales", "Consulting revenue", "Component purchases",
+                 "Office rent"]
+    got, info = ingest.infer_categories(odd_codes, odd_names)
+    check("An unrecognised chart falls back to the account names",
+          got == ["Revenue", "Revenue", "COGS", "OpEx"], str(got))
+    check("An unrecognised chart says so rather than guessing quietly",
+          info["style"] is None, str(info["style"]))
+    check("The unrecognised chart is reported to the user",
+          any("did not match any chart" in i
+              for i in ingest.category_issues(odd_codes, odd_names, got, info)))
+
+    # Costs with no revenue at all is the shape of a misread chart.
+    all_cost, cost_info = ingest.infer_categories(
+        ["6100", "6200"], ["Marketing spend", "Salaries"])
+    check("A file with no revenue line is flagged",
+          any("No account was classified as revenue" in i for i in
+              ingest.category_issues(["6100", "6200"], ["Marketing spend", "Salaries"],
+                                     all_cost, cost_info)))
+
+    # Expense types, where the file carries no expense-type column.
+    etypes, einfo = ingest.infer_expense_types(
+        ["Berkoltseg", "Bergarulek", "Marketing kampany", "Berleti dij",
+         "Ertekcsokkenesi leiras", "Valami egyedi tetel", "Arbevetel"],
+        ["OpEx", "OpEx", "OpEx", "OpEx", "Other", "OpEx", "Revenue"])
+    check("Expense types are inferred from Hungarian account names",
+          etypes[:5] == ["Salaries & wages", "Payroll benefits",
+                         "Marketing & advertising", "Facilities & office",
+                         "Depreciation & amortisation"], str(etypes))
+    check("An unrecognised cost is grouped, not dropped",
+          etypes[5] == ingest.UNCLASSIFIED_EXPENSE, etypes[5])
+    check("Revenue accounts get no expense type", etypes[6] == "")
+    check("The inference reports how much of it was a guess",
+          einfo["recognised"] == 5 and einfo["unclassified"] == 1, str(einfo))
 
     # A document number must never be read as an amount.
     docnum = pd.DataFrame({

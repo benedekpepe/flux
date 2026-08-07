@@ -321,10 +321,369 @@ def year_to_date(std: pd.DataFrame, period: str) -> pd.DataFrame:
     return aggregate_to_accounts(upto.drop(columns=["period"]))
 
 
+
+# ---------------------------------------------------------------------------
+# Category inference
+# ---------------------------------------------------------------------------
+# The account code alone cannot say what a line is. "5" opens material cost in a
+# US chart, every cost by nature in a Hungarian one, and an expense account in
+# SAP; "8" is revenue in SAP and a cost in Hungary. Reading the first digit and
+# hoping was silently reporting Hungarian revenue as an operating expense, and
+# an SAP chart with its revenue and materials swapped - a finished-looking pack
+# with the bottom line inverted, which is the worst way to be wrong.
+#
+# So two independent readings are taken - the account name and the account code
+# - and they are made to agree before either is trusted.
+
+CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    # Order matters: the first match wins, so the narrow classes are tested
+    # before the broad ones. "Interest income" is financing, not revenue.
+    ("Other", (
+        "ertekcsokken", "ecs leiras", "terven feluli", "amortiz", "depreciat",
+        "kamat", "interest", "arfolyam", "exchange difference", "fx ",
+        "penzugyi muveletek", "financial expense", "financial income",
+        "tarsasagi ado", "income tax", "corporate tax", "deferred tax",
+        "rendkivuli", "extraordinary", "impairment", "ertekveszt",
+    )),
+    ("Revenue", (
+        "arbevetel", "ertekesites", "bevetel", "revenue", "sales", "turnover",
+        "income from", "fee income", "subscription income", "net sales",
+    )),
+    ("COGS", (
+        "anyagkoltseg", "anyagjellegu", "kozvetlen", "elabe", "eladott aru",
+        "eladott (koz)vetitett", "alapanyag", "alkatresz",
+        "cost of sales", "cost of goods", "cogs", "direct labour",
+        "direct labor", "material", "component", "merchandise", "purchases",
+        "freight", "fuvar", "szallitasi koltseg", "hosting", "infrastructure",
+    )),
+    ("OpEx", (
+        "berkoltseg", "ber ", "berek", "szemelyi jellegu", "bergarulek",
+        "jarulek", "szocialis hozzajarulas", "premium", "jutalom", "bonusz",
+        "igenybe vett szolgaltatas", "egyeb szolgaltatas", "berleti",
+        "iroda", "rezsi", "marketing", "hirdetes", "reklam", "biztositas",
+        "utazas", "kikuldetes", "reprezentacio", "szoftver", "licenc",
+        "konyveles", "ugyved", "tanacsadas", "alvallalkozo", "megbizasi",
+        "salary", "salaries", "wage", "payroll", "personnel", "staff",
+        "advertis", " ads", "ads ", "promotion", "rent", "office", "utilit",
+        "facilit",
+        "insurance", "travel", "entertainment", "software", "licence",
+        "license", "consult", "legal", "audit", "professional",
+        "contractor", "recruit", "training", "telephone", "telecom",
+        "operating expense", "egyeb rafordit", "egyeb koltseg", "overhead",
+        "occupancy", "repairs", "maintenance", "karbantartas",
+    )),
+]
+
+
+def _fold(text) -> str:
+    """Lowercase and strip accents, so Hungarian names match either spelling."""
+    import unicodedata
+    folded = unicodedata.normalize("NFKD", str(text).lower())
+    return "".join(ch for ch in folded if not unicodedata.combining(ch))
+
+
+def category_from_name(name) -> str | None:
+    """The category a human would read off the account name, or None."""
+    text = _fold(name)
+    if not text.strip():
+        return None
+    for category, words in CATEGORY_KEYWORDS:
+        if any(w in text for w in words):
+            return category
+    return None
+
+
+def _hungarian(code: str) -> str | None:
+    """The Hungarian statutory chart: 5 and 8 are costs, 9 is revenue."""
+    two, one = code[:2], code[:1]
+    if one == "9":
+        return "Other" if two in {"97", "98", "99"} else "Revenue"
+    if two in {"57", "86", "87", "88", "89"}:
+        return "Other"
+    if two in {"51", "52", "53"} or one == "8":
+        return "COGS" if two in {"51", "81", "82"} else "OpEx"
+    if one == "5":
+        return "OpEx"
+    return None
+
+
+CHART_STYLES: dict[str, "callable"] = {
+    # The chart the engine's own demo uses, and the common English/IFRS shape.
+    "4-5-6-7": lambda c: {"4": "Revenue", "5": "COGS", "6": "OpEx",
+                          "7": "Other"}.get(c[:1]),
+    # SAP's standard chart: revenue in the 800s, primary costs in the 400s -
+    # but the 400s are not one thing. 40-41 is material consumption, 42-47 is
+    # personnel and other operating cost, 48 is depreciation.
+    "SAP": lambda c: ({"40": "COGS", "41": "COGS", "48": "Other"}.get(c[:2])
+                      or {"4": "OpEx", "8": "Revenue", "6": "OpEx",
+                          "7": "OpEx", "2": "Other"}.get(c[:1])),
+    "Hungarian": _hungarian,
+}
+
+
+def infer_categories(codes, names) -> tuple[list[str], dict]:
+    """Classify every account, and say how confident the classification is.
+
+    Each candidate chart style is scored on how often its reading of the account
+    code agrees with the reading of the account name. The winner has to beat a
+    floor, so an unrecognised chart falls back to the names rather than being
+    forced into the shape of a chart it is not.
+
+    Returns the categories and a dict describing what happened, so the caller
+    can put it in front of the user instead of quietly proceeding.
+    """
+    codes = [str(c).strip() for c in codes]
+    names = list(names)
+    by_name = [category_from_name(n) for n in names]
+    named = [i for i, c in enumerate(by_name) if c]
+
+    scores, coverage = {}, {}
+    for style, fn in CHART_STYLES.items():
+        read = [fn(codes[i]) for i in named]
+        agree = sum(1 for i, r in zip(named, read) if r == by_name[i])
+        scores[style] = (agree / len(named)) if named else 0.0
+        coverage[style] = sum(1 for c in codes if fn(c)) / max(1, len(codes))
+        if not any(read):
+            scores[style] = 0.0
+
+    best = max(scores, key=scores.get) if scores else None
+    confidence = scores.get(best, 0.0)
+    # Below the floor the codes are telling a different story from the names,
+    # which means the chart is one this list does not know.
+    trusted = best if (confidence >= 0.6 and len(named) >= 3) else None
+    blind = False
+    if trusted is None and len(named) < 3:
+        # An extract whose account names say nothing - "Konto 4001" - leaves the
+        # codes as the only evidence there is. Refusing to read them would
+        # classify the whole ledger as operating expense, which is worse than
+        # reading them and saying so. The widest-covering chart wins.
+        trusted = max(coverage, key=coverage.get)
+        blind = coverage[trusted] > 0
+        trusted = trusted if blind else None
+
+    # A confirmed chart style wins over a single keyword hit. The style was
+    # corroborated by most of the accounts on the file, which makes it
+    # systematic evidence; one word in one name can be ambiguous - "subscription
+    # revenue" and "software subscription" share a keyword and nothing else. The
+    # names classify what the codes cannot, and every disagreement is reported.
+    out, sources, disagreed = [], [], []
+    for i, code in enumerate(codes):
+        by_code = CHART_STYLES[trusted](code) if trusted else None
+        if by_code:
+            out.append(by_code); sources.append("code")
+            if by_name[i] and by_name[i] != by_code:
+                disagreed.append(f"{code} {names[i]} "
+                                 f"(code: {by_code}, name: {by_name[i]})")
+        elif by_name[i]:
+            out.append(by_name[i]); sources.append("name")
+        else:
+            out.append("OpEx"); sources.append("default")
+
+    info = {
+        "style": trusted,
+        "blind": blind,
+        "confidence": round(confidence, 2),
+        "coverage": {k: round(v, 2) for k, v in coverage.items()},
+        "scores": {k: round(v, 2) for k, v in scores.items()},
+        "named": len(named),
+        "defaulted": [f"{codes[i]} {names[i]}" for i, s in enumerate(sources)
+                      if s == "default"],
+        "disagreed": disagreed,
+        "categories": out,
+        "sources": sources,
+    }
+    return out, info
+
+
+def category_issues(codes, names, categories, info) -> list[str]:
+    """What the user has to be told before they trust the pack.
+
+    A misread chart produces a report that looks finished and has the bottom
+    line inverted. Every one of these says the same thing in a different way:
+    check the classification before you send this to anyone.
+    """
+    notes = []
+    # Silence is the right answer when every account corroborates the chart:
+    # a warning that always fires is a warning nobody reads. Anything less than
+    # complete agreement is worth a sentence, because a misread chart produces a
+    # finished-looking pack with the bottom line inverted.
+    if info["style"] and not info.get("blind") and info["confidence"] >= 0.999 \
+            and not info.get("disagreed") and "Revenue" in set(categories) \
+            and not info["defaulted"]:
+        return []
+    if info.get("blind"):
+        notes.append(
+            f"No account name carried a usable signal, so the {info['style']} "
+            "chart of accounts was chosen from the account codes alone and "
+            "nothing corroborates it. Check the classification before relying "
+            "on the P&L."
+        )
+    elif info["style"]:
+        notes.append(
+            f"Accounts classified using the {info['style']} chart of accounts, "
+            f"which {int(info['confidence'] * 100)}% of the account names agree "
+            "with. Check the classification if that is not your chart."
+        )
+    else:
+        notes.append(
+            "The account codes did not match any chart of accounts Flux knows "
+            f"(best fit {int(info['confidence'] * 100)}%), so accounts were "
+            "classified from their names alone. Review the classification "
+            "before relying on the P&L."
+        )
+    if "Revenue" not in set(categories):
+        notes.append(
+            "No account was classified as revenue. Either this extract holds "
+            "costs only, or the revenue accounts were misread - a P&L with no "
+            "revenue reports the whole result as a loss."
+        )
+    # The loudest signal of a misread chart: a name that says revenue and a
+    # classification that says otherwise.
+    contradicted = [f"{codes[i]} {names[i]}" for i in range(len(codes))
+                    if category_from_name(names[i]) == "Revenue"
+                    and categories[i] != "Revenue"]
+    if contradicted:
+        notes.append(
+            "These accounts read as revenue by name but were classified "
+            f"otherwise: {'; '.join(contradicted[:6])}"
+            f"{' and others' if len(contradicted) > 6 else ''}."
+        )
+    if info.get("disagreed"):
+        notes.append(
+            "The account name and the account code disagreed on these; the name "
+            f"was followed: {'; '.join(info['disagreed'][:5])}"
+            f"{' and others' if len(info['disagreed']) > 5 else ''}."
+        )
+    if len(info["defaulted"]) > max(2, len(codes) // 5):
+        notes.append(
+            f"{len(info['defaulted'])} of {len(codes)} accounts could not be "
+            "classified from either their code or their name and defaulted to "
+            "operating expenses."
+        )
+    return notes
+
+
+# ---------------------------------------------------------------------------
+# Expense type inference
+# ---------------------------------------------------------------------------
+# The expense report is the view a cost owner reads, and it needs a natural
+# classification the general ledger usually does not carry as a column. Where
+# there is no column, the account name is the only evidence available - so it is
+# used, and the fact that it was a guess is reported.
+#
+# The types are the ones in the chart of accounts, so an inferred file groups
+# exactly like a native one.
+
+EXPENSE_TYPE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("Depreciation & amortisation", ("ertekcsokken", "ecs", "amortiz", "depreciat")),
+    ("Financing & bank", ("kamat", "banki", "bankkolts", "penzugyi muveletek",
+                          "interest", "bank charge", "bank fee", "financing")),
+    ("Payroll benefits", ("bergarulek", "jarulek", "szocialis hozzajarulas",
+                          "szochо", "payroll tax", "social contribution",
+                          "national insurance", "pension", "benefit")),
+    ("Employee incentives", ("premium", "jutalom", "bonusz", "osztonzo",
+                             "bonus", "incentive", "commission")),
+    ("External staff / contractors", ("alvallalkozo", "megbizasi", "kolcsonzott",
+                                      "contractor", "external staff", "agency",
+                                      "temporary staff", "freelance")),
+    ("Direct labour", ("kozvetlen ber", "direct labour", "direct labor")),
+    ("Salaries & wages", ("berkoltseg", "berek", "ber ", "szemelyi jellegu",
+                          "munkaber", "salary", "salaries", "wage", "payroll",
+                          "personnel cost", "staff cost")),
+    ("Marketing & advertising", ("marketing", "hirdetes", "reklam", "promocio",
+                                 "advertis", "promotion", "campaign", "brand")),
+    ("External professional fees", ("konyveles", "ugyved", "jogi", "tanacsadas",
+                                    "konyvvizsgal", "audit", "legal", "consult",
+                                    "professional fee", "advisory")),
+    ("IT & software", ("szoftver", "informatik", "software", "saas", "it cost",
+                       "subscription")),
+    ("Third-party licences", ("licenc", "jogdij", "licence", "license",
+                              "royalty", "third-party")),
+    ("Hosting & infrastructure", ("hosting", "szerver", "felho", "cloud",
+                                  "infrastructure", "datacent", "aws", "azure")),
+    ("Facilities & office", ("berleti", "iroda", "rezsi", "kozuzemi", "takaritas",
+                             "rent", "office", "utilit", "facilit", "cleaning",
+                             "premises")),
+    ("Travel & entertainment", ("utazas", "kikuldetes", "reprezentacio", "travel",
+                                "entertainment", "hotel", "mileage", "subsistence")),
+    ("Insurance", ("biztositas", "insurance")),
+    ("Materials & components", ("anyagkoltseg", "anyagjellegu", "alapanyag",
+                                "alkatresz", "anyag", "material", "component",
+                                "raw ", "consumable")),
+    ("Logistics & fees", ("szallitas", "fuvar", "logisztika", "logistics",
+                          "freight", "shipping", "delivery", "courier",
+                          "customs")),
+]
+
+#: Where a cost cannot be recognised. Named, not blank, so the line still
+#: appears on the expense report instead of vanishing from a spend view.
+UNCLASSIFIED_EXPENSE = "Other expenses"
+
+
+def expense_type_from_name(name, category=None) -> str | None:
+    """The natural expense type an account name implies, or None.
+
+    Revenue accounts get nothing: the expense report is a spend view and a
+    revenue line has no place on it.
+    """
+    if category == "Revenue":
+        return None
+    text = _fold(name)
+    if not text.strip():
+        return None
+    for etype, words in EXPENSE_TYPE_KEYWORDS:
+        if any(w in text for w in words):
+            return etype
+    return None
+
+
+def infer_expense_types(names, categories) -> tuple[list[str], dict]:
+    """Classify every cost account by natural expense type.
+
+    Returns the types and a summary, because a guess the user cannot see is
+    worse than no guess at all.
+    """
+    out, recognised = [], 0
+    for name, category in zip(names, categories):
+        if category == "Revenue":
+            out.append("")
+            continue
+        etype = expense_type_from_name(name, category)
+        if etype:
+            recognised += 1
+            out.append(etype)
+        else:
+            out.append(UNCLASSIFIED_EXPENSE)
+    costs = sum(1 for c in categories if c != "Revenue")
+    return out, {"recognised": recognised, "costs": costs,
+                 "unclassified": costs - recognised}
+
+
+def expense_type_issues(info) -> list[str]:
+    if not info["costs"]:
+        return []
+    notes = [
+        f"No expense-type column was supplied, so expense types were inferred "
+        f"from the account names: {info['recognised']} of {info['costs']} cost "
+        f"accounts were recognised. Check the Expense Report before relying on it."
+    ]
+    if info["unclassified"]:
+        notes.append(
+            f"{info['unclassified']} cost accounts could not be recognised and "
+            f"are grouped under \"{UNCLASSIFIED_EXPENSE}\". Add an expense-type "
+            "column to classify them yourself."
+        )
+    return notes
+
+
 def infer_category(code: str) -> str:
-    c = str(code).strip()
-    first = c[:1]
-    return {"4": "Revenue", "5": "COGS", "6": "OpEx", "7": "Other"}.get(first, "OpEx")
+    """The single-account fallback, kept for callers with no name to hand.
+
+    Prefer `infer_categories`, which reads the names too and can say when it is
+    guessing. This one cannot.
+    """
+    return {"4": "Revenue", "5": "COGS", "6": "OpEx",
+            "7": "Other"}.get(str(code).strip()[:1], "OpEx")
 
 
 # Debit markers across the systems that use them: SAP writes S/H (Soll/Haben),
@@ -413,7 +772,16 @@ def apply_mapping(df: pd.DataFrame, matches: list[ColMatch]) -> pd.DataFrame:
         out["category"] = df[src["category"]].astype(str).str.strip().str.title()
         out["category"] = out["category"].replace({"Cogs": "COGS", "Opex": "OpEx"})
     else:
-        out["category"] = out["account_code"].map(infer_category)
+        # Both readings, code and name, and a record of which one was trusted -
+        # kept on the frame so `ingest` can put the guess in front of the user.
+        cats, info = infer_categories(out["account_code"], out["account_name"])
+        out["category"] = cats
+        out.attrs["category_inference"] = info
+    if "expense_type" not in src:
+        etypes, einfo = infer_expense_types(out["account_name"], out["category"])
+        if einfo["recognised"]:
+            out["expense_type"] = etypes
+            out.attrs["expense_type_inference"] = einfo
     for opt in ("period", "expense_type", "department", "cost_centre", "entity"):
         if opt in src:
             col = df[src[opt]]
@@ -595,6 +963,18 @@ def ingest(source, overrides: dict | None = None, use_llm: bool | None = None):
             )
         if "actual" in src and std["actual"].sum() == 0:
             issues.append("The actual total is zero; check which column holds the amount.")
+
+        # An unread chart of accounts produces a finished-looking pack with the
+        # bottom line inverted, so the classification is reported whether it went
+        # well or badly - it is the one guess the user cannot check by eye.
+        cat_info = std.attrs.get("category_inference")
+        if cat_info:
+            issues.extend(category_issues(list(std["account_code"]),
+                                          list(std["account_name"]),
+                                          list(std["category"]), cat_info))
+        exp_info = std.attrs.get("expense_type_inference")
+        if exp_info:
+            issues.extend(expense_type_issues(exp_info))
 
         # Multi-currency ledger mapped to a local-currency column: amounts in
         # different currencies must not be added together.
