@@ -23,11 +23,21 @@ automates.
 
 ## Two ways in
 
-- **Upload your own data** — a GL extract or trial balance, optionally with a
-  separate budget file. Flux maps the columns, asks you to confirm, and builds
-  the pack from whatever dimensions your file actually has.
+- **The input template** *(recommended)* — one row per account, columns already
+  named. The same engine runs either way and the numbers are identical where the
+  inference is right; what the template removes is the inference itself. Nothing
+  to map, no chart of accounts to recognise, no expense types read off account
+  names, and no printed subtotals to filter out.
+- **Upload your own export** — a GL extract or trial balance, optionally with a
+  separate budget file. Flux reads it as it is: it maps the columns, classifies
+  the accounts, drops the printed furniture, and **shows you every assumption it
+  made** so you can correct any of them before the pack is built.
 - **Sample company** — three legal entities in EUR, USD and HUF, transaction-level
   actuals and a full-year budget. Generates the complete pack with no upload.
+
+The upload path is the interesting one and it is where most of the work went;
+the template is what to use when the report has to be right the first time and
+nobody has time to check four assumptions.
 
 ## What it does
 
@@ -430,7 +440,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 240 checks` means everything is wired up correctly.
+`PASSED all 242 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -491,7 +501,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**240 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**242 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

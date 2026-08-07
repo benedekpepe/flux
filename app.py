@@ -184,7 +184,8 @@ with tab_upload:
         # budget one rendered wider than the actuals one and the mismatch read
         # as a mistake rather than a hierarchy.
         up = st.file_uploader(
-            "Actuals — GL extract or trial balance", type=["csv", "xlsx", "xls"],
+            "Actuals — GL extract or trial balance (Flux will read it and show "
+            "you every assumption it made)", type=["csv", "xlsx", "xls"],
             accept_multiple_files=False, key="up_actuals",
         )
         up_bud = st.file_uploader(
@@ -195,7 +196,7 @@ with tab_upload:
         # A label of its own, rather than an invisible spacer: the left column
         # starts with the uploader's label, so without one the button sat half a
         # line high. It also gives the button a name it was missing.
-        st.markdown("Input template")
+        st.markdown("Input template · recommended")
         tpath = Path(__file__).parent / "data" / "input_template.xlsx"
         if tpath.exists():
             st.download_button(
@@ -203,7 +204,16 @@ with tab_upload:
                 file_name="flux_input_template.xlsx", mime=XLSX_MIME,
                 width="stretch",
             )
-            st.caption("Optional — Flux reads most exports as they are.")
+            # Not "more accurate": the same engine runs either way, and where
+            # the inference is right the numbers are identical. What the
+            # template removes is the guessing, which is a claim that can be
+            # checked - unlike "more accurate", which invites the question of
+            # when the other path is wrong.
+            st.caption(
+                "The columns are already named, so nothing has to be inferred: "
+                "no column mapping, no chart of accounts, no expense types read "
+                "off account names, and no subtotal rows to filter out."
+            )
         st.markdown("")
         st.caption(
             "**The pack adapts to your columns.** An expense-type column adds the "

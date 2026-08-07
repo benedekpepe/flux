@@ -376,6 +376,29 @@ def test_ingestion() -> None:
           close(line(prep, "Net income").actual, 2_700_000),
           str(line(prep, "Net income").actual))
 
+    # An accounting export routinely opens with a cover sheet and puts the
+    # ledger second. Reading the first sheet found no account column at all.
+    import openpyxl
+    book = Path(tempfile.mkdtemp()) / "cover.xlsx"
+    wb_in = openpyxl.Workbook()
+    wb_in.active.title = "Fedlap"
+    wb_in.active.append(["XY Kft."])
+    wb_in.active.append(["2025.01.01 - 2025.06.30"])
+    data = wb_in.create_sheet("Fokonyv")
+    for row in (["Szamla", "Megnevezes", "Teny"],
+                ["911", "Arbevetel", -5_000_000],
+                ["5111", "Anyagkoltseg", 2_000_000]):
+        data.append(row)
+    wb_in.save(book)
+    cstd, _r3, _i3 = ingest.ingest(book)
+    check("The ledger sheet is found behind a cover sheet",
+          cstd is not None and len(cstd) == 2,
+          "no rows" if cstd is None else str(len(cstd)))
+    if cstd is not None:
+        check("A workbook with a cover sheet still reports its revenue",
+              close(line(build_report(cstd), "Revenue").actual, 5_000_000),
+              str(line(build_report(cstd), "Revenue").actual))
+
     # An account legitimately named after a total word must survive, or the
     # filter is worse than the problem it fixes.
     real = pd.DataFrame({

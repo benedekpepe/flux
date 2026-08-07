@@ -977,11 +977,44 @@ def _sniff_delimiter(text: str) -> str:
     return best
 
 
-def load_file(path_or_buffer, sheet_name=0) -> pd.DataFrame:
+def _pick_sheet(sheets: dict) -> str:
+    """The sheet holding the ledger, in a workbook that also holds a cover page.
+
+    An accounting export routinely opens with a cover sheet - the company name,
+    the period, a logo - and puts the data second. Taking the first sheet meant
+    reading the cover page and reporting that no account column could be found:
+    a clear failure, but a needless one.
+
+    The ledger is the sheet whose header row resolves to the most fields Flux
+    can use, with size as the tie-break. Scoring by the columns rather than by
+    row count keeps a long list of notes from beating a short trial balance.
+    """
+    best, best_key = None, (-1, -1)
+    for title, frame in sheets.items():
+        if frame.empty:
+            continue
+        try:
+            promoted = _promote_header(frame)
+            matched = sum(1 for m in match_columns(list(promoted.columns))
+                          if m.source and m.field in CANONICAL)
+        except Exception:
+            matched, promoted = 0, frame
+        key = (matched, len(promoted))
+        if key > best_key:
+            best, best_key = title, key
+    return best if best is not None else next(iter(sheets))
+
+
+def load_file(path_or_buffer, sheet_name=None) -> pd.DataFrame:
     """Read a CSV/Excel file, locating the header row even if titles sit above it."""
     name = getattr(path_or_buffer, "name", str(path_or_buffer)).lower()
     if name.endswith((".xlsx", ".xls")):
-        raw = pd.read_excel(path_or_buffer, sheet_name=sheet_name, header=None)
+        if sheet_name is None:
+            sheets = pd.read_excel(path_or_buffer, sheet_name=None, header=None)
+            sheet_name = _pick_sheet(sheets) if len(sheets) > 1 else next(iter(sheets))
+            raw = sheets[sheet_name]
+        else:
+            raw = pd.read_excel(path_or_buffer, sheet_name=sheet_name, header=None)
     else:
         if hasattr(path_or_buffer, "read"):
             data = path_or_buffer.read()
