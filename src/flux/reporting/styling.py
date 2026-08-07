@@ -35,7 +35,6 @@ AMBER_FILL = "FBEEDA"; AMBER_INK = "8A5A00"
 # A third badge tone: the flag now names a timeframe rather than saying only
 # "material", so MONTH, YTD and BOTH need to be told apart at a glance.
 BLUE_FILL = "E6ECF7"; BLUE_INK = "31518C"
-BAR = "8AA0CC"
 
 F_TITLE = Font(name=FONT, size=20, bold=True, color=WHITE)
 F_BANDR = Font(name=FONT, size=11, color="D7DCE6")

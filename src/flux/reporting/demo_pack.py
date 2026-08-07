@@ -28,7 +28,6 @@ from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from openpyxl.formatting.rule import DataBarRule
 from openpyxl.utils import get_column_letter
 
 from ..coa import (PNL_STRUCTURE, CATEGORY_FAVOURABLE, FAV_HIGHER,
@@ -36,7 +35,7 @@ from ..coa import (PNL_STRUCTURE, CATEGORY_FAVOURABLE, FAV_HIGHER,
 from ..commentary import line_comments
 from ..engine import build_report
 from .styling import (
-    FONT, BAR, GREEN_INK, RED_INK,
+    FONT, GREEN_INK, RED_INK,
     F_HEAD, F_BODY, F_SMALL, F_SUB, F_INPUT, F_KPI_LABEL, F_KPI_VALUE, F_NOTE,
     FILL_HEAD, FILL_IVORY, FILL_BAND, FILL_WHITE,
     CUR2, CUR_EUR, CUR2_EUR, PCT, RATE, KPI_DELTA, LCY_FORMATS,
@@ -642,8 +641,11 @@ def _write_drivers(ws, agg, gl, glf, gll, bud, budf, budl, period) -> None:
         (rows_higher if higher else rows_lower).append(r)
         r += 1
     last = r - 1
-    ws.conditional_formatting.add(f"{L.var}{first}:{L.var}{last}",
-        DataBarRule(start_type="min", end_type="max", color=BAR, showValue=True))
+    # No data bar on the variance column: the rows are already ordered by the
+    # size of the movement, while a bar encodes the signed value, so the longest
+    # bar was rarely the top row. The colour carries the direction, the F/U cell
+    # carries the verdict and the flag carries the timeframe - a fourth encoding
+    # on the same cell only competed with the digits behind it.
     _report_cf(ws, L, first, last, rows_higher, rows_lower)
     widths(ws, L.widths(12, 30, 12))
     fit_text_columns(ws, ["B", "C"], first, last)

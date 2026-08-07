@@ -23,14 +23,13 @@ from pathlib import Path
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from openpyxl.formatting.rule import DataBarRule
 from openpyxl.utils import get_column_letter
 
 from ..coa import PNL_STRUCTURE, CATEGORY_FAVOURABLE, FAV_HIGHER, EXPENSE_GROUPS
 from ..commentary import line_comments
 from ..engine import build_report, has_budget as _detect_budget
 from .styling import (
-    FONT, GREEN_INK, RED_INK, BAR,
+    FONT, GREEN_INK, RED_INK,
     F_BODY, F_SMALL, F_SUB, F_INPUT, F_KPI_LABEL, F_KPI_VALUE, F_NOTE,
     FILL_IVORY, FILL_BAND, FILL_WHITE,
     CUR_EUR, PCT, KPI_DELTA,
@@ -530,8 +529,9 @@ def _drivers(ws, agg, gl, glf, gll, GLC, period, var, perno=None):
         (rows_higher if higher else rows_lower).append(r)
         r += 1
     last = r - 1
-    ws.conditional_formatting.add(f"{L.var}{first}:{L.var}{last}",
-        DataBarRule(start_type="min", end_type="max", color=BAR, showValue=True))
+    # No data bar on the variance column: see the note in demo_pack. The rows
+    # are ordered by the size of the movement and a bar encodes the signed
+    # value, so the two disagreed on every sheet that carried one.
     _report_cf(ws, L, first, last, rows_higher, rows_lower, var=var)
     widths(ws, L.widths(12, 30, 12))
     fit_text_columns(ws, ["B", "C"], first, last)
