@@ -660,8 +660,21 @@ def _header_columns(ws) -> dict:
     return {}
 
 
+def _table_end(ws) -> int:
+    """The last row of the report table, before the analysis section starts.
+
+    The analysis blocks are headed by the line they describe, so "Net income ·
+    BOTH" reads as a total row to anything scanning column A - and then fails a
+    conditional-formatting check for a row that is prose.
+    """
+    for r in range(5, ws.max_row + 1):
+        if str(ws.cell(row=r, column=1).value or "").startswith("Analysis"):
+            return r - 1
+    return ws.max_row
+
+
 def _total_rows(ws) -> list[int]:
-    return [r for r in range(5, ws.max_row + 1)
+    return [r for r in range(5, _table_end(ws) + 1)
             if isinstance(ws.cell(row=r, column=1).value, str)
             and ws.cell(row=r, column=1).value.lower().startswith(
                 ("total", "consolidated", "net income"))]
@@ -778,6 +791,74 @@ def test_workbooks() -> None:
     # off-by-one in a formatting range silently drops: the detail above it goes
     # green and red while the total stays black.
     _check_total_row_formatting(wb, "Demo pack")
+
+    # Analysis under each sheet: the same findings in both packs and the deck,
+    # and never a causal claim - the ledger does not record why a line moved,
+    # and a pack that invented one would be unfalsifiable against its own table.
+    from flux.analysis import NO_CAUSE_NOTE, concentration, persistence, question
+
+    analysed = 0
+    for name in ("P&L Report", "Expense Report", "By Entity", "Departments & CCs"):
+        ws = wb[name]
+        column_a = [str(ws.cell(row=r, column=1).value or "")
+                    for r in range(1, ws.max_row + 1)]
+        has_section = any(v.startswith("Analysis") for v in column_a)
+        check(f"Demo pack: '{name}' carries an analysis section", has_section,
+              str(column_a[-6:]))
+        if has_section:
+            analysed += 1
+            check(f"Demo pack: '{name}' states that it does not explain causes",
+                  any(NO_CAUSE_NOTE[:40] in str(ws.cell(row=r, column=1).value or "")
+                      for r in range(1, ws.max_row + 1)))
+            check(f"Demo pack: '{name}' analysis names a heading it can support",
+                  any(v in ("Concentration", "Coverage", "Persistence",
+                            "Full year", "Ask") for v in column_a),
+                  "no findings written")
+    check("Demo pack: every report sheet was analysed", analysed == 4, str(analysed))
+
+    # No sentence in the pack may claim a cause. This is the one assertion that
+    # would catch a well-meaning edit turning description into diagnosis.
+    # "because" is not on the list: the disclaimer uses it, and so does the
+    # arithmetic ("more than the net movement, because part of it is offset").
+    # These four are the phrasings that can only introduce a business cause,
+    # which is the thing the ledger cannot support.
+    banned = ("due to", "caused by", "the reason", "driven by the")
+    offenders = []
+    for name in wb.sheetnames:
+        ws = wb[name]
+        for row in ws.iter_rows():
+            for cell in row:
+                text = str(cell.value or "").lower()
+                if len(text) > 40 and any(b in text for b in banned):
+                    offenders.append(f"{name}!{cell.coordinate}")
+    check("Nothing in the pack claims to know why a line moved",
+          not offenders, str(offenders[:4]))
+
+    # The findings themselves: shape in, sentence out.
+    one_off = pd.DataFrame({
+        "period": ["2025-0" + str(i) for i in range(1, 7)],
+        "period_no": [202501 + i for i in range(6)],
+        "actual": [100.0, 100.0, 100.0, 400_000.0, 100.0, 100.0],
+        "budget": [100.0] * 6,
+    })
+    q = question(one_off, higher_is_better=False)
+    check("A single month out of line is called a timing question",
+          q is not None and "timing" in q.text, "" if q is None else q.text[:60])
+    steady = one_off.copy()
+    steady["actual"] = [200.0] * 6
+    q2 = question(steady, higher_is_better=False)
+    check("A steady overrun is called a level question",
+          q2 is not None and "level rather than an event" in q2.text,
+          "" if q2 is None else q2.text[:60])
+    p1 = persistence(steady, higher_is_better=False)
+    check("Persistence counts the adverse months",
+          p1 is not None and "6 of 6" in p1.text, "" if p1 is None else p1.text)
+    spread = pd.DataFrame({"account_name": list("abcdefghij"),
+                           "var_bud": [10.0] * 10})
+    c1 = concentration(spread, 100.0)
+    check("A variance spread thin says so rather than naming a driver",
+          c1 is not None and "no single driver" in c1.text,
+          "" if c1 is None else c1.text[:60])
 
     # Roll-up rows carry commentary; leaf rows do not, because there the comment
     # could only restate the columns beside it. And the comment must cover both

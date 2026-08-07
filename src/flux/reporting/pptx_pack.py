@@ -25,6 +25,7 @@ from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
+from ..analysis import NO_CAUSE_NOTE
 from ..commentary import generate_commentary, line_comments
 from ..engine import (MaterialityRule, build_report, department_variances,
                       entity_variances, has_budget, leaf_variances)
@@ -283,8 +284,17 @@ def _cover(prs, entity, period, ni, budgeted):
 # ---------------------------------------------------------------------------
 # Slide 2 - the result
 # ---------------------------------------------------------------------------
-def _kpi_card(s, x, y, w, label, value, delta, favourable, budgeted):
-    card = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, Inches(1.5))
+def _kpi_card(s, x, y, w, label, value, delta, favourable, budgeted,
+              second=""):
+    """A KPI card: the headline figure, its delta, and the month beneath.
+
+    The workbook headlines the year to date and carries the month as the second
+    reading, because a single month is noisy and cumulative performance against
+    the annual plan is what a management cover is read for. The deck follows it,
+    so the two cannot show the same company two ways.
+    """
+    height = Inches(1.78) if second else Inches(1.5)
+    card = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, height)
     card.adjustments[0] = 0.09
     _fill(card, IVORY, line=BRASS, width=Pt(1))
     _text(s, x + Inches(0.26), y + Inches(0.2), w - Inches(0.5), Inches(0.25),
@@ -294,27 +304,42 @@ def _kpi_card(s, x, y, w, label, value, delta, favourable, budgeted):
     if budgeted:
         _text(s, x + Inches(0.26), y + Inches(1.06), w - Inches(0.5), Inches(0.28),
               [(delta, 12, True, GREEN if favourable else RED)])
+    if second:
+        _text(s, x + Inches(0.26), y + Inches(1.38), w - Inches(0.5), Inches(0.28),
+              [(second, 11, False, MUTE)])
 
 
-def _result(prs, report, gl, period, budgeted):
+def _result(prs, report, gl, period, budgeted, ytd_report=None):
     s = _blank(prs)
-    _slide_header(s, "The result", "Where the month landed",
-                  f"Reporting month {period}  ·  EUR")
+    headline = ytd_report if ytd_report is not None else report
+    subtitle = ("Where the year has got to" if ytd_report is not None
+                else "Where the month landed")
+    meta = (f"YTD through {period}, with the month  ·  EUR" if ytd_report is not None
+            else f"Reporting month {period}  ·  EUR")
+    _slide_header(s, "The result", subtitle, meta)
 
-    def line(label):
-        return report[report.line == label].iloc[0]
+    def line(frame, label):
+        return frame[frame.line == label].iloc[0]
 
-    rev, ebit, ni = line("Revenue"), line("Operating income (EBIT)"), line("Net income")
+    labels = ("Revenue", "Operating income (EBIT)", "Net income")
     gap = Inches(0.34)
     cw = (W - 2 * MARGIN - 2 * gap) / 3
-    for i, r in enumerate((rev, ebit, ni)):
-        _kpi_card(s, MARGIN + i * (cw + gap), Inches(1.62), cw, r.line, r.actual,
-                  f"{_signed(r.var_bud)} ({_pct(r.var_bud_pct)}) vs budget"
-                  if budgeted else "", r.fav_unfav == "F", budgeted)
+    for i, label in enumerate(labels):
+        head = line(headline, label)
+        second = ""
+        if ytd_report is not None:
+            m = line(report, label)
+            second = (f"Month {m.actual:,.0f}"
+                      + (f"  ·  {_pct(m.var_bud_pct)}" if budgeted else ""))
+        _kpi_card(s, MARGIN + i * (cw + gap), Inches(1.62), cw,
+                  (head.line + " · YTD") if ytd_report is not None else head.line,
+                  head.actual,
+                  f"{_signed(head.var_bud)} ({_pct(head.var_bud_pct)}) vs budget"
+                  if budgeted else "", head.fav_unfav == "F", budgeted, second)
 
     # The narrative's first two paragraphs: the bottom line, then revenue and margin.
     text = generate_commentary(report, gl).split("\n\n")
-    body = s.shapes.add_textbox(MARGIN, Inches(3.45), W - 2 * MARGIN, Inches(3.4))
+    body = s.shapes.add_textbox(MARGIN, Inches(3.72), W - 2 * MARGIN, Inches(3.1))
     tf = body.text_frame
     tf.word_wrap = True
     tf.margin_left = tf.margin_right = 0
@@ -592,6 +617,51 @@ def _outlook(prs, ytd_report, fy_report, months, period):
 
 
 # ---------------------------------------------------------------------------
+# Slide - what the numbers point at
+# ---------------------------------------------------------------------------
+def _analysis(prs, blocks, period):
+    """The same analysis the workbook carries under each sheet.
+
+    One slide, the two lines that carry a flag, and for each the shape of the
+    movement and the question it makes worth asking. Never a cause: the ledger
+    does not record one, and a deck is the last place to invent it.
+    """
+    s = _blank(prs)
+    _slide_header(s, "Analysis", "What the numbers point at",
+                  f"YTD through {period}, with the month  \u00b7  EUR")
+
+    y = Inches(1.55)
+    for label, flag, items in blocks[:2]:
+        head = f"{label}   \u00b7   {flag}" if flag else label
+        _text(s, MARGIN, y, W - 2 * MARGIN, Inches(0.3), [(head, 15, True, NAVY)])
+        y += Inches(0.36)
+        for finding in items:
+            _text(s, MARGIN + Inches(0.1), y, Inches(1.35), Inches(0.3),
+                  [(finding.heading, 11, True, MUTE)])
+            box = s.shapes.add_textbox(MARGIN + Inches(1.5), y - Inches(0.04),
+                                       W - 2 * MARGIN - Inches(1.5), Inches(0.7))
+            tf = box.text_frame
+            tf.word_wrap = True
+            tf.margin_left = tf.margin_right = tf.margin_top = 0
+            run = tf.paragraphs[0].add_run()
+            run.text = finding.text
+            run.font.name = FONT
+            run.font.size = Pt(11.5)
+            run.font.color.rgb = INK
+            y += Inches(0.34) if len(finding.text) < 115 else Inches(0.56)
+        y += Inches(0.26)
+
+    _text(s, MARGIN, H - Inches(1.0), W - 2 * MARGIN, Inches(0.6),
+          [(NO_CAUSE_NOTE, 9, False, MUTE)])
+    s.notes_slide.notes_text_frame.text = (
+        "Derived from the figures in the pack: concentration, persistence, the "
+        "full-year run rate and the question the shape of the variance implies. "
+        "No causal claim is made anywhere in this deck."
+    )
+    return s
+
+
+# ---------------------------------------------------------------------------
 # Slide - what moved it
 # ---------------------------------------------------------------------------
 def _drivers(prs, gl, materiality, period, budgeted):
@@ -763,7 +833,8 @@ def build_pptx_pack(gl: pd.DataFrame,
                     months: int | None = None,
                     entity: str = "Demo Company Ltd",
                     materiality: MaterialityRule | None = None,
-                    budgeted: bool | None = None) -> Path:
+                    budgeted: bool | None = None,
+                    analysis_blocks: list | None = None) -> Path:
     """Build the management deck.
 
     Parameters
@@ -779,6 +850,9 @@ def build_pptx_pack(gl: pd.DataFrame,
         for the outlook slide, which compares two projections against it.
     months : periods elapsed, used for the average month. Derived as needed.
     budgeted : whether a plan exists; detected from the data when omitted.
+    analysis_blocks : optional findings from `flux.analysis`, the same ones the
+        workbook prints under each sheet. Without them the analysis slide is
+        omitted rather than filled with a restatement of the table.
     """
     materiality = materiality or MaterialityRule()
     budgeted = has_budget(gl) if budgeted is None else bool(budgeted)
@@ -789,12 +863,17 @@ def build_pptx_pack(gl: pd.DataFrame,
     prs = Presentation()
     prs.slide_width, prs.slide_height = W, H
 
+    have_ytd = ytd is not None and not ytd.empty and budgeted
+    elapsed = months or max(1, int(period[5:7]))
+    ytd_report = build_report(ytd, materiality, budgeted=True) if have_ytd else None
+    # The commentary covers both timeframes, exactly as it does in the workbook.
+    comments = line_comments(report, gl, materiality,
+                             ytd_report=ytd_report, ytd_gl=ytd)
+
     _cover(prs, entity, period, ni, budgeted)
-    _result(prs, report, gl, period, budgeted)
+    _result(prs, report, gl, period, budgeted, ytd_report)
     _pnl_table(prs, report, comments, period, budgeted)
-    if ytd is not None and not ytd.empty and budgeted:
-        elapsed = months or max(1, int(period[5:7]))
-        ytd_report = build_report(ytd, materiality, budgeted=True)
+    if have_ytd:
         _year_to_date(prs, ytd_report, report, elapsed, period, budgeted)
         if fy_budget is not None and not fy_budget.empty:
             _outlook(prs, ytd_report,
@@ -802,6 +881,8 @@ def build_pptx_pack(gl: pd.DataFrame,
                      elapsed, period)
     if budgeted:
         _drivers(prs, gl, materiality, period, budgeted)
+    if analysis_blocks:
+        _analysis(prs, analysis_blocks, period)
     if detail is not None and {"department", "entity"} <= set(detail.columns):
         _spend(prs, detail, period, materiality)
 

@@ -324,6 +324,50 @@ reports June. Whichever sheets get built, they all carry the same columns; a
 file holding a single period says so on the P&L rather than leaving the reader
 to work out why the month and the year to date are identical.
 
+## Analysis
+
+Under every reporting sheet, and on its own slide in the deck, is a short
+analysis of the lines that carry a flag. Four findings, in the order a reader
+wants them:
+
+| Finding | Answers |
+| --- | --- |
+| **Concentration** | is it one line or forty — and which ones |
+| **Persistence** | how many of the months so far went the wrong way, and whether the gap is widening |
+| **Full year** | where the run rate lands against the plan, and what the remaining months would have to do |
+| **Ask** | the question the shape of the variance makes worth putting to someone |
+
+> **Other operating costs · BOTH**
+> **Concentration** — Effectively all of the movement sits in 3 lines: marketing
+> & advertising (€47.0k), IT & software (€319) and facilities & office (€149).
+> **Persistence** — Adverse in 6 of 6 months and the gap has been widening.
+> **Full year** — At the current run rate the year lands €511.2k over a €3.5m
+> plan. Holding the plan leaves €1.5m for the remaining 6 months, against
+> €333.4k a month so far.
+> **Ask** — Adverse in 6 of 6 months, which is a level rather than an event: the
+> plan and the actual activity disagree. Worth asking the budget owner whether
+> the plan was set before the current activity level.
+
+### What it will not do
+
+**It does not say why.** A ledger does not carry causes — a line text in a real
+extract reads `Invoice 88213` or `Reclass to 5211`, not "campaign overspend" —
+so any sentence beginning *because* would be invented, and an invented cause in a
+management pack is the one thing the reader cannot check against the numbers
+beside it.
+
+The **Ask** finding is the honest form of "what should I do". A single month out
+of line and a six-month drift are the same variance and a different problem: one
+is a timing question for the accountant (cut-off, an accrual released, an invoice
+in the wrong period), the other a planning question for the budget owner (the
+plan and the activity level disagree, and one of them has to move). Which it is
+follows from the data, so the pack says it — and names who is likely to hold the
+answer rather than guessing at it.
+
+Blocks are written only for the lines the flag already picked out. One under
+every row would bury the two that matter. The test suite asserts that no cell in
+the pack contains a causal phrasing.
+
 ## Commentary
 
 Every comment has the same shape: the year to date, then the month, then the
@@ -379,6 +423,7 @@ flux/
 │   ├── coa.py                   # chart of accounts, org hierarchy, P&L structure
 │   ├── engine.py                # variance engine: P&L, drivers, departments, entities
 │   ├── commentary.py            # narrative generation (optional LLM enrichment)
+│   ├── analysis.py              # findings: concentration, persistence, outlook, the question
 │   ├── ingest.py                # arbitrary client files -> the internal schema
 │   ├── synthetic_data.py        # seeded generator for the demo company
 │   └── reporting/
@@ -440,7 +485,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 253 checks` means everything is wired up correctly.
+`PASSED all 271 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -501,7 +546,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**253 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**271 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

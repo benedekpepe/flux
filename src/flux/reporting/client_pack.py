@@ -25,6 +25,7 @@ from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 
 from ..coa import PNL_STRUCTURE, CATEGORY_FAVOURABLE, FAV_HIGHER, EXPENSE_GROUPS
+from ..analysis import NO_CAUSE_NOTE  # noqa: F401 - used by _write_analysis
 from ..commentary import line_comments, rollup_comments, total_comment
 from ..engine import build_report, has_budget as _detect_budget
 from .styling import (
@@ -39,6 +40,7 @@ from .styling import (
 )
 # The columns every reporting sheet shares are written by `rows`, so a sheet
 # here only supplies the five figures that depend on how it cuts the ledger.
+from .demo_pack import _write_analysis
 from .rows import (BASE_KEYS, lever_echo as _lever_echo,
                    report_cf as _report_cf, write_sum_tail as _sum_tail,
                    write_tail as _tail)
@@ -114,6 +116,128 @@ def _gl_input(ws, agg, period, dims, budgeted=True):
 
 
 # ---------------------------------------------------------------------------
+# Analysis
+# ---------------------------------------------------------------------------
+def _pnl_blocks(month, ytd, agg, months):
+    """Findings for the P&L, including the subtotals the flag usually lands on.
+
+    A category line rarely clears both floors on its own; EBIT and net income
+    do, because every category's movement lands on them. So each computed line
+    is analysed against the lines that make it up, signed the way the structure
+    signs them.
+    """
+    from ..analysis import findings
+
+    structure = {line.label: line for line in PNL_STRUCTURE}
+
+    def signed(frame, label, col):
+        node = structure[label]
+        if node.kind == "category":
+            return frame.loc[frame["category"] == node.category, col].sum()
+        return sum((1 if sign == "+" else -1) * signed(frame, ref, col)
+                   for sign, ref in node.components)
+
+    def categories(label, direction=1):
+        node = structure[label]
+        if node.kind == "category":
+            return {node.category: direction}
+        out = {}
+        for sign, ref in node.components:
+            out.update(categories(ref, direction * (1 if sign == "+" else -1)))
+        return out
+
+    blocks = []
+    for line in PNL_STRUCTURE:
+        m_var = signed(month, line.label, "actual") - signed(month, line.label, "budget")
+        y_var = signed(ytd, line.label, "actual") - signed(ytd, line.label, "budget")
+        flag = _flag_of(m_var, _pct_or_none(m_var, signed(month, line.label, "budget")),
+                        y_var, _pct_or_none(y_var, signed(ytd, line.label, "budget")))
+        if not flag:
+            continue
+        signs = categories(line.label)
+        drivers = pd.DataFrame([
+            {"account_name": ref.label,
+             "var_bud": signs.get(ref.category, 0) *
+                        (month.loc[month["category"] == ref.category, "actual"].sum()
+                         - month.loc[month["category"] == ref.category, "budget"].sum())}
+            for ref in PNL_STRUCTURE if ref.kind == "category"
+            and ref.category in signs])
+        sign_col = ytd["category"].map(signs)
+        signed_ytd = ytd.assign(_a=ytd["actual"] * sign_col,
+                                _b=ytd["budget"] * sign_col).dropna(subset=["_a"])
+        hist = None
+        if "period_no" in signed_ytd.columns and signed_ytd["period_no"].nunique() > 1:
+            hist = (signed_ytd.groupby(["period", "period_no"], as_index=False)
+                    [["_a", "_b"]].sum()
+                    .rename(columns={"_a": "actual", "_b": "budget"}))
+        whole = agg["category"].map(signs)
+        ytd_actual = signed_ytd["_a"].sum()
+        blocks.append((line.label, flag, findings(
+            drivers=drivers, total_var=m_var, history=hist,
+            run_rate=ytd_actual / months * 12 if months else 0.0,
+            fy_budget=(agg["budget"] * whole).dropna().sum(),
+            ytd_actual=ytd_actual, months_elapsed=months,
+            higher_is_better=line.favourable == FAV_HIGHER)))
+    return blocks
+
+
+def _findings_for(month, ytd, agg, perno, months, *, dim, child, values=None,
+                  higher=False, spend_only=True, net=False):
+    from ..analysis import findings
+
+    if dim not in agg.columns or child not in agg.columns:
+        return []
+    frames = []
+    for frame in (month, ytd, agg):
+        f = frame
+        if spend_only:
+            f = f[f["category"] != "Revenue"]
+        if net:
+            f = _net_frame(f)
+        frames.append(f)
+    m, y, whole = frames
+    values = values if values is not None else sorted(
+        v for v in m[dim].astype(str).unique() if v and v != "(multiple)")
+
+    out = []
+    for value in values:
+        mm, yy = m[m[dim] == value], y[y[dim] == value]
+        m_var = mm["actual"].sum() - mm["budget"].sum()
+        y_var = yy["actual"].sum() - yy["budget"].sum()
+        flag = _flag_of(m_var, _pct_or_none(m_var, mm["budget"].sum()),
+                        y_var, _pct_or_none(y_var, yy["budget"].sum()))
+        if not flag:
+            continue
+        drv = mm.groupby(child, as_index=False)[["actual", "budget"]].sum()
+        drv["var_bud"] = drv["actual"] - drv["budget"]
+        hist = None
+        if "period_no" in yy.columns and yy["period_no"].nunique() > 1:
+            hist = (yy.groupby(["period", "period_no"], as_index=False)
+                      [["actual", "budget"]].sum())
+        ytd_actual = yy["actual"].sum()
+        out.append((value, flag, findings(
+            drivers=drv, total_var=m_var, history=hist,
+            run_rate=ytd_actual / months * 12 if months else 0.0,
+            fy_budget=whole.loc[whole[dim] == value, "budget"].sum(),
+            ytd_actual=ytd_actual, months_elapsed=months,
+            higher_is_better=higher, name_col=child)))
+    return out
+
+
+def _flag_of(month_var, month_pct, ytd_var, ytd_pct):
+    """The same MONTH / YTD / BOTH verdict the sheet's Flag column reaches."""
+    def material(var, pct):
+        return (abs(var) >= DEFAULT_ABS_THRESHOLD
+                and (pct is None or abs(pct) >= DEFAULT_PCT_THRESHOLD))
+    m, y = material(month_var, month_pct), material(ytd_var, ytd_pct)
+    return "BOTH" if m and y else "MONTH" if m else "YTD" if y else ""
+
+
+def _pct_or_none(var, base):
+    return None if abs(base) < 100 else var / abs(base)
+
+
+# ---------------------------------------------------------------------------
 # Filters shared by every reporting sheet
 # ---------------------------------------------------------------------------
 def _filters(R, GLC, perno):
@@ -175,7 +299,7 @@ def _months_elapsed(agg, period, perno) -> int:
 # P&L
 # ---------------------------------------------------------------------------
 def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
-         single_period=False, months=1):
+         single_period=False, months=1, analysis_blocks=None):
     """The management P&L, and the sheet that owns the pack's lever cells.
 
     Prior-year actuals are not on this sheet: a front page has room for one
@@ -309,6 +433,7 @@ def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
     ws.row_dimensions[5].height = 18; ws.row_dimensions[6].height = 26
     ws.row_dimensions[7].height = 14; ws.row_dimensions[8].height = 14
 
+    _write_analysis(ws, L, last + 3, analysis_blocks or [], 52)
     widths(ws, width_list)
 
     footnote = last + 2
@@ -324,7 +449,7 @@ def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
 # By Entity
 # ---------------------------------------------------------------------------
 def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None,
-               single_period=False, comments=None):
+               single_period=False, comments=None, analysis_blocks=None):
     """Net income per legal entity, on the columns every other sheet uses.
 
     Net income - revenue less spend - is the one measure that consolidates to
@@ -385,6 +510,7 @@ def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None,
     ws.cell(row=r + 2, column=1,
             value="Each entity's net income is its revenue less its spend, which is why "
                   "the entities consolidate to the group P&L.").font = F_NOTE
+    _write_analysis(ws, L, r + 5, analysis_blocks or [], 52)
     widths(ws, L.widths(26) + [52])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 2)
@@ -412,7 +538,7 @@ def _group_expense_types(values: list[str]) -> list[tuple[str, list[str]]]:
 
 
 def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
-                   single_period=False, comments=None):
+                   single_period=False, comments=None, analysis_blocks=None):
     """Expense report by type, grouped with subtotals."""
     hide_grid(ws)
     L = Layout(1)
@@ -491,6 +617,7 @@ def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
                   "operating costs, cost of sales, and non-cash and financing items. "
                   "Bold rows are group subtotals. Every line is a cost, so an overspend "
                   "is unfavourable whichever timeframe it shows up in.").font = F_NOTE
+    _write_analysis(ws, L, r + 5, analysis_blocks or [], 52)
     widths(ws, L.widths(30) + [52])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 3)
@@ -501,7 +628,8 @@ def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None,
 # Departments & cost centres (hierarchy read from the data)
 # ---------------------------------------------------------------------------
 def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var,
-                 perno=None, single_period=False, comments=None):
+                 perno=None, single_period=False, comments=None,
+                 analysis_blocks=None):
     hide_grid(ws)
     L = Layout(1)
     com = get_column_letter(L.ncols + 1)
@@ -574,6 +702,7 @@ def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var,
             value="Departments are roll-ups; cost centres are indented beneath them. "
                   "Totals sum the departments only. Revenue is excluded: this is a "
                   "spend view.").font = F_NOTE
+    _write_analysis(ws, L, r + 5, analysis_blocks or [], 52)
     widths(ws, L.widths(32) + [52])
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 4, last + 3)
@@ -584,7 +713,7 @@ def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var,
 # Drivers
 # ---------------------------------------------------------------------------
 def _drivers(ws, agg, gl, glf, gll, GLC, period, var, perno=None,
-             single_period=False):
+             single_period=False, analysis_blocks=None):
     hide_grid(ws)
     L = Layout(3)
     title_band(ws, "Variance Drivers · account level", meta_line(period, single_period), L.last_col)
@@ -630,6 +759,7 @@ def _drivers(ws, agg, gl, glf, gll, GLC, period, var, perno=None,
     # are ordered by the size of the movement and a bar encodes the signed
     # value, so the two disagreed on every sheet that carried one.
     _report_cf(ws, L, first, last, rows_higher, rows_lower, var=var)
+    _write_analysis(ws, L, last + 3, analysis_blocks or [], 52)
     widths(ws, L.widths(12, 30, 12))
     fit_text_columns(ws, ["B", "C"], first, last)
     quiet_indicators(ws, 4, last)
@@ -742,8 +872,20 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
     ws_gl = wb.active; ws_gl.title = "GL Input"
     glf, gll, GLC = _gl_input(ws_gl, agg, period, gl_dims, budgeted)
     months = _months_elapsed(agg, period, perno)
+
+    def analysis(dim, child, **kw):
+        """Findings for one sheet, or nothing when there is no level below."""
+        if not budgeted:
+            return []
+        return _findings_for(month, ytd, agg, perno, months, dim=dim,
+                             child=child, **kw)
+
+    # On the P&L the flag lands on the category lines, and what explains one is
+    # the accounts inside it - so that is the level the drivers come from.
+    pnl_blocks = _pnl_blocks(month, ytd, agg, months) if budgeted else []
+    drv_blocks = analysis("category", "account_name", spend_only=False)
     _pnl(wb.create_sheet("P&L Report"), "GL Input", glf, gll, GLC, period,
-         comments, report, var, perno, single_period, months)
+         comments, report, var, perno, single_period, months, pnl_blocks)
 
     order = ["P&L Report"]
     if "expense_type" in dims:
@@ -753,14 +895,17 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
             _expense_sheet(wb.create_sheet("Expense Report"), _group_expense_types(vals),
                            "GL Input", glf, gll, GLC, period, var, perno,
                            single_period,
-                           rollup("expense_group", "expense_type", spend=True))
+                           rollup("expense_group", "expense_type", spend=True),
+                           analysis("expense_group", "expense_type"))
             order.append("Expense Report")
     if "entity" in dims:
         vals = [v for v in month["entity"].unique() if v and v != "(multiple)"]
         if len(vals) > 1:
             _by_entity(wb.create_sheet("By Entity"), sorted(vals), "GL Input",
                        glf, gll, GLC, period, var, perno, single_period,
-                       rollup("entity", "department", higher=True, net=True))
+                       rollup("entity", "department", higher=True, net=True),
+                       analysis("entity", "department", higher=True,
+                                spend_only=False, net=True))
             order.append("By Entity")
     if "department" in dims:
         spend = month[month["category"] != "Revenue"]
@@ -774,11 +919,12 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
             _departments(wb.create_sheet("Departments & CCs"), hierarchy, "GL Input",
                          glf, gll, GLC, period, has_cc and any(hierarchy.values()),
                          var, perno, single_period,
-                         rollup("department", "cost_centre", spend=True))
+                         rollup("department", "cost_centre", spend=True),
+                         analysis("department", "cost_centre"))
             order.append("Departments & CCs")
 
     _drivers(wb.create_sheet("Drivers"), agg, "GL Input", glf, gll, GLC, period,
-             var, perno, single_period)
+             var, perno, single_period, drv_blocks)
     order += ["Drivers", "GL Input"]
     for i, name in enumerate(order):
         wb.move_sheet(name, -wb.sheetnames.index(name) + i)

@@ -25,6 +25,7 @@ from flux import ingest
 from flux.ingest import (match_columns, _content_detect, apply_mapping,
                          CANONICAL, REQUIRED)
 from flux.coa import EXPENSE_TYPES
+from flux.reporting.demo_pack import demo_analysis_blocks
 from flux.engine import build_report, has_budget
 from flux.reporting import build_client_pack, build_demo_pack, build_pptx_pack
 from flux.synthetic_data import (generate_budget_year, generate_month,
@@ -53,6 +54,11 @@ st.caption("Turn a general ledger into a management P&L with variance analysis, 
            "favourable / unfavourable classification and materiality flagging.")
 
 SAMPLE_PERIOD = "2025-06"
+def _demo_blocks():
+    """The sample company's findings, shared by its workbook and its deck."""
+    return demo_analysis_blocks(SAMPLE_PERIOD)
+
+
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PPTX_MIME = ("application/vnd.openxmlformats-officedocument"
              ".presentationml.presentation")
@@ -432,7 +438,8 @@ with tab_sample:
                        sample, SAMPLE_PERIOD, o,
                        detail=monthly_detail(SAMPLE_PERIOD),
                        ytd=_sample_ytd(), fy_budget=_sample_fy_budget(),
-                       months=int(SAMPLE_PERIOD[5:7])),
+                       months=int(SAMPLE_PERIOD[5:7]),
+                       analysis_blocks=_demo_blocks()),
                    Path(tempfile.gettempdir()) / "flux_sample_deck.pptx")
     with col_x:
         _render_download("pack_sample", "Download flux_sample_pack.xlsx")
