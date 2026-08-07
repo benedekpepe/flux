@@ -11,7 +11,10 @@ The sheets adapt to whichever dimensions the uploaded file actually carries:
     + entity          By Entity           (consolidation)
 
 Every figure is a live formula over the GL Input sheet, so the pack recalculates
-when an input is edited. Styling helpers are shared with excel_export.
+when an input is edited. Every reporting sheet carries the same columns - the
+month, the year to date, the full-year plan and the run rate against it, then
+F/U and the materiality flag - so the sheets differ only in what they cut the
+ledger by. Styling, formula and row helpers are shared with the demo pack.
 """
 
 from __future__ import annotations
@@ -28,21 +31,24 @@ from ..commentary import line_comments
 from ..engine import build_report, has_budget as _detect_budget
 from .styling import (
     FONT, GREEN_INK, RED_INK, BAR,
-    F_BODY, F_SMALL, F_SUB, F_INPUT, F_LABEL, F_KPI_LABEL, F_KPI_VALUE, F_NOTE,
-    F_FU, F_FLAG,
-    FILL_IVORY, FILL_BAND, FILL_WHITE, FILL_LEVER,
-    CUR, CUR_EUR, PCT, KPI_DELTA,
-    CENTER, LEFT, RIGHT, WRAP, indent, band_fill,
+    F_BODY, F_SMALL, F_SUB, F_INPUT, F_KPI_LABEL, F_KPI_VALUE, F_NOTE,
+    FILL_IVORY, FILL_BAND, FILL_WHITE,
+    CUR_EUR, PCT, KPI_DELTA,
+    LEFT, RIGHT, WRAP, indent, band_fill,
     GOLD_SIDE, SUBTOTAL_TOP, TOTAL_TOP,
-    hide_grid, title_band, headers, widths, outline, badge_cf, note, wrapped_height,
-    variance_cf, spend_variance_cf,
-    fit_text_columns,
+    hide_grid, title_band, headers, widths, outline, lever, note,
+    wrapped_height, fit_text_columns,
     quiet_indicators, collect_quiet_ranges, suppress_error_indicators,
 )
+# The columns every reporting sheet shares are written by `rows`, so a sheet
+# here only supplies the five figures that depend on how it cuts the ledger.
+from .rows import (BASE_KEYS, report_cf as _report_cf,
+                   write_sum_tail as _sum_tail, write_tail as _tail)
 from .formulas import (
-    LEVER_EUR, LEVER_PCT, LEV_E, LEV_P, PL_E, PL_P,
+    Layout,
+    LEVER_EUR, LEVER_PCT, LEVER_MONTHS, LEV_E, LEV_P, LEV_M,
     DEFAULT_ABS_THRESHOLD, DEFAULT_PCT_THRESHOLD,
-    pct_f, Variance, NO_BUDGET_NOTE,
+    Variance, NO_BUDGET_NOTE, SINGLE_PERIOD_NOTE,
 )
 
 
@@ -110,118 +116,123 @@ def _gl_input(ws, agg, period, dims, budgeted=True):
 
 
 # ---------------------------------------------------------------------------
+# Filters shared by every reporting sheet
+# ---------------------------------------------------------------------------
+def _filters(R, GLC, perno):
+    """The month and year-to-date criteria for the SUMIFS on every sheet.
+
+    A file with no period column cannot be cut by time, so both criteria are
+    empty and the month, the year to date and the full year describe the same
+    postings. That is stated on the sheet rather than hidden: three identical
+    columns with no explanation read like a bug.
+    """
+    if perno and "period_no" in GLC:
+        return (f',{R(GLC["period_no"])},{perno}',
+                f',{R(GLC["period_no"])},"<={perno}"')
+    return "", ""
+
+
+def _months_elapsed(period: str | None) -> int:
+    """The default for the months lever, read off the reporting period."""
+    try:
+        return int(str(period)[5:7])
+    except (TypeError, ValueError):
+        return 1
+
+
+# ---------------------------------------------------------------------------
 # P&L
 # ---------------------------------------------------------------------------
-def _pnl(ws, gl, glf, gll, L, period, comments, report, var, perno=None, ytd=False):
+def _pnl(ws, gl, glf, gll, GLC, period, comments, report, var, perno=None,
+         single_period=False):
+    """The management P&L, and the sheet that owns the pack's lever cells.
+
+    Prior-year actuals are not on this sheet: a front page has room for one
+    secondary comparison, and against budget beats against last year. The
+    prior-year column is still on the GL Input sheet, where it can be read
+    beside the figures it belongs to.
+    """
     hide_grid(ws)
-    meta = (f"Reporting month {period}  ·  with year to date  ·  \u20ac" if ytd
-            else f"Reporting month {period}  ·  \u20ac")
-    title_band(ws, "Management P&L · Variance Report", meta, "L" if ytd else "K")
+    L = Layout(1)
+    com = get_column_letter(L.ncols + 1)
+    title_band(ws, "Management P&L · Variance Report",
+               f"Reporting month {period}  ·  with year to date and full-year run rate"
+               f"  ·  \u20ac", com)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
-    cat, act, bud, pri = R(L["category"]), R(L["actual"]), R(L["budget"]), R(L["prior_year"])
-    # Month figures filter to the reporting period; YTD sums everything up to it.
-    mflt = f',{R(L["period_no"])},{perno}' if perno and "period_no" in L else ""
-    yflt = f',{R(L["period_no"])},"<={perno}"' if perno and "period_no" in L else ""
+    cat, act, bud = R(GLC["category"]), R(GLC["actual"]), R(GLC["budget"])
+    mflt, yflt = _filters(R, GLC, perno)
 
-    # The two materiality thresholds are editable lever cells that every other
-    # sheet points at. With no budget nothing can be flagged, so they are left
-    # off rather than shown as controls that do nothing.
+    # The two materiality floors are only levers when there is something to
+    # flag, so with no budget they are left off rather than shown as controls
+    # that do nothing. Months elapsed stays either way: the run rate is built
+    # from actuals alone.
     if var:
-        ws.merge_cells("A9:B9"); ws["A9"] = "Materiality floor (\u20ac)"
-        ws["A9"].font = F_LABEL; ws["A9"].alignment = LEFT
-        ws[LEVER_EUR] = DEFAULT_ABS_THRESHOLD; ws[LEVER_EUR].font = F_INPUT
-        ws[LEVER_EUR].number_format = CUR_EUR; ws[LEVER_EUR].fill = FILL_LEVER
-        ws[LEVER_EUR].alignment = CENTER
-        ws.merge_cells("E9:F9"); ws["E9"] = "Materiality floor (%)"
-        ws["E9"].font = F_LABEL; ws["E9"].alignment = LEFT
-        ws[LEVER_PCT] = DEFAULT_PCT_THRESHOLD; ws[LEVER_PCT].font = F_INPUT
-        ws[LEVER_PCT].number_format = PCT; ws[LEVER_PCT].fill = FILL_LEVER
-        ws[LEVER_PCT].alignment = CENTER
-        outline(ws, 9, 3, 9, 3, GOLD_SIDE); outline(ws, 9, 7, 9, 7, GOLD_SIDE)
+        lever(ws, "A9:B9", "Materiality floor (\u20ac)", LEVER_EUR,
+              DEFAULT_ABS_THRESHOLD, CUR_EUR)
+        lever(ws, "E9:F9", "Materiality floor (%)", LEVER_PCT,
+              DEFAULT_PCT_THRESHOLD, PCT)
+    lever(ws, "I9:J9", "Months elapsed", LEVER_MONTHS,
+          _months_elapsed(period), "0")
+    ws.merge_cells(f"M9:{com}9")
+    ws["M9"] = ("F/U judges the month variance; Flag names which timeframe "
+                "clears both floors.")
+    ws["M9"].font = F_NOTE; ws["M9"].alignment = LEFT
 
-    heads = (["", "Month Act", "Month Bud", "Month Var", "Var %",
-              "YTD Act", "YTD Bud", "YTD Var", "Var %", "F/U", "Flag", "Commentary"]
-             if ytd else
-             ["", "Actual", "Budget", "Var (Bud)", "Var %", "Prior Yr Act",
-              "Var (PY)", "Var %", "F/U", "Flag", "Commentary"])
-    headers(ws, 10, heads, center_from=2, center_to=len(heads) - 1)
-    fu_col, flag_col, com_col = (("J", "K", "L") if ytd else ("I", "J", "K"))
-    # Declared before the rows are written: the commentary row height is
-    # estimated from the width of the column the text has to wrap inside.
-    width_list = ([26, 13, 13, 12, 9, 13, 13, 12, 9, 6, 11, 52] if ytd
-                  else [26, 13, 13, 13, 9, 13, 13, 9, 6, 11, 58])
+    headers(ws, 10, L.headers("") + ["Commentary"], center_from=2,
+            center_to=L.ncols)
+    width_list = L.widths(26) + [52]
+
     subs = {"Gross profit", "Operating income (EBIT)", "Net income"}
     label_row, first, r, ci = {}, 11, 11, 0
+    rows_higher, rows_lower = [], []
     for line in PNL_STRUCTURE:
-        A, B, C, D, E = f"A{r}", f"B{r}", f"C{r}", f"D{r}", f"E{r}"
-        Fc, G, H = f"F{r}", f"G{r}", f"H{r}"
-        I, J, K = f"{fu_col}{r}", f"{flag_col}{r}", f"{com_col}{r}"
+        c = L.row(r)
         is_sub = line.label in subs
-        ws[A] = line.label
+        higher = line.favourable == FAV_HIGHER
+        ws[f"A{r}"] = line.label
         if line.kind == "category":
-            ws[B] = f'=SUMIFS({act},{cat},"{line.category}"{mflt})'
-            ws[C] = var.cell(f'=SUMIFS({bud},{cat},"{line.category}"{mflt})')
-            if ytd:
-                ws[Fc] = f'=SUMIFS({act},{cat},"{line.category}"{yflt})'
-                ws[G] = var.cell(f'=SUMIFS({bud},{cat},"{line.category}"{yflt})')
-            else:
-                ws[Fc] = f'=SUMIFS({pri},{cat},"{line.category}"{mflt})'
+            crit = f'{cat},"{line.category}"'
+            ws[c["act"]] = f'=SUMIFS({act},{crit}{mflt})'
+            ws[c["bud"]] = var.cell(f'=SUMIFS({bud},{crit}{mflt})')
+            ws[c["yact"]] = f'=SUMIFS({act},{crit}{yflt})'
+            ws[c["ybud"]] = var.cell(f'=SUMIFS({bud},{crit}{yflt})')
+            # No period criterion: the full-year plan is the whole input sheet.
+            ws[c["fybud"]] = var.cell(f'=SUMIFS({bud},{crit})')
         else:
-            pb, pc, pf, pg = [], [], [], []
+            parts = {key: [] for key in BASE_KEYS}
             for sign, ref in line.components:
                 rr = label_row[ref]
-                pb.append(f"{sign}B{rr}"); pc.append(f"{sign}C{rr}")
-                pf.append(f"{sign}F{rr}"); pg.append(f"{sign}G{rr}")
-            ws[B] = "=" + "".join(pb)
-            ws[C] = var.cell("=" + "".join(pc))
-            ws[Fc] = "=" + "".join(pf)
-            if ytd:
-                ws[G] = var.cell("=" + "".join(pg))
-        ws[D] = var.cell(f"={B}-{C}"); ws[E] = var.pct(D, C)
-        if ytd:
-            ws[H] = var.cell(f"={Fc}-{G}")
-            ws[f"I{r}"] = var.pct(H, G)
-        else:
-            ws[G] = f"={B}-{Fc}"; ws[H] = pct_f(G, Fc)
-        ws[I] = var.fu(D, line.favourable == FAV_HIGHER)
-        ws[J] = var.flag(D, E, LEV_E, LEV_P)
+                for key in parts:
+                    parts[key].append(f"{sign}{getattr(L, key)}{rr}")
+            for key, terms in parts.items():
+                formula = "=" + "".join(terms)
+                ws[c[key]] = formula if key in ("act", "yact") else var.cell(formula)
+        _tail(ws, L, r, higher=higher, bold=is_sub, var=var,
+              lev_e=LEV_E, lev_p=LEV_P, months=LEV_M)
 
         fill = FILL_IVORY if is_sub else (FILL_BAND if ci % 2 else FILL_WHITE)
         if not is_sub:
             ci += 1
-        span = "ABCDEFGHIJKL" if ytd else "ABCDEFGHIJK"
-        for col in span:
+        for col in L.span() + [com]:
             ws[f"{col}{r}"].fill = fill
-        money_cols = ("B", "C", "D", "F", "G", "H") if ytd else ("B", "C", "D", "F", "G")
-        pct_cols = ("E", "I") if ytd else ("E", "H")
-        for col in money_cols:
-            cc = ws[f"{col}{r}"]; cc.number_format = CUR; cc.alignment = RIGHT
-            cc.font = F_SUB if is_sub else F_BODY
-        for col in pct_cols:
-            cc = ws[f"{col}{r}"]; cc.number_format = PCT; cc.alignment = RIGHT
-            cc.font = F_SUB if is_sub else F_BODY
-        ws[A].font = F_SUB if is_sub else F_BODY; ws[A].alignment = LEFT
-        ws[I].alignment = CENTER; ws[I].font = F_FU
-        ws[J].alignment = CENTER; ws[J].font = F_FLAG
+        ws[f"A{r}"].font = F_SUB if is_sub else F_BODY
+        ws[f"A{r}"].alignment = LEFT
         comment = comments.get(line.label, "")
-        kc = ws[K]; kc.value = comment; kc.alignment = WRAP
+        kc = ws[f"{com}{r}"]; kc.value = comment; kc.alignment = WRAP
         kc.font = F_SUB if is_sub else F_BODY
         if is_sub:
-            for col in span:
+            for col in L.span() + [com]:
                 ws[f"{col}{r}"].border = SUBTOTAL_TOP
+        (rows_higher if higher else rows_lower).append(r)
         ws.row_dimensions[r].height = wrapped_height(comment, width_list[-1])
         label_row[line.label] = r; r += 1
     last = r - 1
-    badge_cf(ws, f"{fu_col}{first}:{fu_col}{last}", f"{flag_col}{first}:{flag_col}{last}")
-    if var:
-        variance_cf(ws, f"D{first}:E{last}", f"${fu_col}{first}")
-        if ytd:
-            variance_cf(ws, f"H{first}:I{last}", f"${fu_col}{first}")
+    _report_cf(ws, L, first, last, rows_higher, rows_lower, var=var)
 
     for (title, key), (c1, c2) in zip(
         [("REVENUE", "Revenue"), ("OPERATING INCOME (EBIT)", "Operating income (EBIT)"),
          ("NET INCOME", "Net income")],
-        [(1, 3), (5, 7), (9, 12)] if ytd else [(1, 3), (5, 7), (9, 11)]):
+        [(1, 3), (5, 7), (9, 11)]):
         lr = label_row[key]; fav = report[report["line"] == key].iloc[0]["fav_unfav"] == "F"
         Lc = get_column_letter(c1); Rt = get_column_letter(c2)
         for rr in (5, 6, 7):
@@ -230,149 +241,85 @@ def _pnl(ws, gl, glf, gll, L, period, comments, report, var, perno=None, ytd=Fal
                 ws.cell(row=rr, column=cc).fill = FILL_IVORY
         ws[f"{Lc}5"] = title; ws[f"{Lc}5"].font = F_KPI_LABEL
         ws[f"{Lc}5"].alignment = LEFT
-        ws[f"{Lc}6"] = f"=B{lr}"; ws[f"{Lc}6"].font = F_KPI_VALUE
+        ws[f"{Lc}6"] = f"={L.act}{lr}"; ws[f"{Lc}6"].font = F_KPI_VALUE
         ws[f"{Lc}6"].number_format = CUR_EUR
         ws[f"{Lc}6"].alignment = LEFT
-        ws[f"{Lc}7"] = var.cell(f"=E{lr}")
+        ws[f"{Lc}7"] = var.cell(f"={L.pct}{lr}")
         ws[f"{Lc}7"].number_format = KPI_DELTA
         ws[f"{Lc}7"].font = Font(name=FONT, size=9, bold=True,
                                  color=GREEN_INK if fav else RED_INK)
         ws[f"{Lc}7"].alignment = LEFT
         outline(ws, 5, c1, 7, c2, GOLD_SIDE)
-    ws.row_dimensions[5].height = 18; ws.row_dimensions[6].height = 26; ws.row_dimensions[7].height = 16
-    for c, w in enumerate(width_list, start=1):
-        ws.column_dimensions[get_column_letter(c)].width = w
+    ws.row_dimensions[5].height = 18; ws.row_dimensions[6].height = 26
+    ws.row_dimensions[7].height = 16
+    widths(ws, width_list)
+
+    footnote = last + 2
     if not var:
-        note(ws, last + 2, NO_BUDGET_NOTE)
-    quiet_indicators(ws, 5, last + 2)
+        note(ws, footnote, NO_BUDGET_NOTE); footnote += 1
+    if single_period:
+        note(ws, footnote, SINGLE_PERIOD_NOTE)
+    quiet_indicators(ws, 5, last + 3)
     ws.freeze_panes = f"A{first}"
 
 
 # ---------------------------------------------------------------------------
-# Generic one-dimension variance sheet (expense type / entity)
+# By Entity
 # ---------------------------------------------------------------------------
-def _dimension_sheet(ws, values, gl, glf, gll, L, period, title, first_header,
-                     dim_key, var, spend_only=False, revenue_split=False,
-                     perno=None, ytd=False):
+def _by_entity(ws, values, gl, glf, gll, GLC, period, var, perno=None):
+    """Net income per legal entity, on the columns every other sheet uses.
+
+    Net income - revenue less spend - is the one measure that consolidates to
+    the group P&L, so it is the measure this sheet reports. The revenue and
+    spend halves are on the P&L, read against the rest of the structure.
+    """
     hide_grid(ws)
-    meta = (f"Reporting month {period}  ·  with year to date  ·  \u20ac" if ytd
-            else f"Reporting month {period}  ·  \u20ac")
-    title_band(ws, title, meta, "K" if ytd else "H")
+    L = Layout(1)
+    title_band(ws, "By Entity · consolidation",
+               f"Reporting month {period}  ·  with year to date  ·  \u20ac", L.last_col)
+    headers(ws, 5, L.headers("Entity"), center_from=2, center_to=L.ncols)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
-    dim, cat = R(L[dim_key]), R(L["category"])
-    act, bud = R(L["actual"]), R(L["budget"])
-    mflt = f',{R(L["period_no"])},{perno}' if perno and "period_no" in L else ""
-    yflt = f',{R(L["period_no"])},"<={perno}"' if perno and "period_no" in L else ""
+    dim, cat = R(GLC["entity"]), R(GLC["category"])
+    act, bud = R(GLC["actual"]), R(GLC["budget"])
+    mflt, yflt = _filters(R, GLC, perno)
 
-    if revenue_split:
-        heads = [first_header, "Revenue", "Spend", "Net income", "Budget net",
-                 "Var (Bud)", "Var %", "F/U"]
-    elif ytd:
-        heads = [first_header, "Month Act", "Month Bud", "Month Var", "Var %",
-                 "YTD Act", "YTD Bud", "YTD Var", "Var %", "F/U", "Flag"]
-    else:
-        heads = [first_header, "Actual", "Budget", "Var (Bud)", "Var %", "F/U", "Flag", ""]
-    headers(ws, 5, heads, center_from=2, center_to=len(heads))
+    def net(source, ent, flt):
+        return (f'=SUMIFS({source},{dim},"{ent}",{cat},"Revenue"{flt})'
+                f'-SUMIFS({source},{dim},"{ent}",{cat},"<>Revenue"{flt})')
 
-    first, r = 6, 6
-    for i, v in enumerate(values):
+    first, r, rows = 6, 6, []
+    for i, ent in enumerate(values):
+        c = L.row(r)
+        ws.cell(row=r, column=1, value=ent).font = F_BODY
+        ws.cell(row=r, column=1).alignment = LEFT
+        ws[c["act"]] = net(act, ent, mflt)
+        ws[c["bud"]] = var.cell(net(bud, ent, mflt))
+        ws[c["yact"]] = net(act, ent, yflt)
+        ws[c["ybud"]] = var.cell(net(bud, ent, yflt))
+        ws[c["fybud"]] = var.cell(net(bud, ent, ""))
+        _tail(ws, L, r, higher=True, var=var)
         band = band_fill(i)
-        ws.cell(row=r, column=1, value=v).font = F_BODY
-        ws.cell(row=r, column=1).alignment = LEFT
-        if revenue_split:
-            B, C, D, E, Fc, G, H = (f"B{r}", f"C{r}", f"D{r}", f"E{r}", f"F{r}", f"G{r}", f"H{r}")
-            ws[B] = f'=SUMIFS({act},{dim},"{v}",{cat},"Revenue"{mflt})'
-            ws[C] = f'=SUMIFS({act},{dim},"{v}",{cat},"<>Revenue"{mflt})'
-            ws[D] = f"={B}-{C}"
-            ws[E] = var.cell(f'=SUMIFS({bud},{dim},"{v}",{cat},"Revenue"{mflt})'
-                             f'-SUMIFS({bud},{dim},"{v}",{cat},"<>Revenue"{mflt})')
-            ws[Fc] = var.cell(f"={D}-{E}"); ws[G] = var.pct(Fc, E); ws[H] = var.fu(Fc, True)
-            for col in (B, C, D, E, Fc):
-                ws[col].number_format = CUR; ws[col].font = F_BODY; ws[col].alignment = RIGHT
-            ws[G].number_format = PCT; ws[G].font = F_BODY; ws[G].alignment = RIGHT
-            ws[H].alignment = CENTER; ws[H].font = F_FU
-            ncols = 8
-        else:
-            crit = f',{cat},"<>Revenue"' if spend_only else ""
-            B, C, D, E = f"B{r}", f"C{r}", f"D{r}", f"E{r}"
-            ws[B] = f'=SUMIFS({act},{dim},"{v}"{crit}{mflt})'
-            ws[C] = var.cell(f'=SUMIFS({bud},{dim},"{v}"{crit}{mflt})')
-            ws[D] = var.cell(f"={B}-{C}"); ws[E] = var.pct(D, C)
-            if ytd:
-                F2, G2, H2, I2 = f"F{r}", f"G{r}", f"H{r}", f"I{r}"
-                ws[F2] = f'=SUMIFS({act},{dim},"{v}"{crit}{yflt})'
-                ws[G2] = var.cell(f'=SUMIFS({bud},{dim},"{v}"{crit}{yflt})')
-                ws[H2] = var.cell(f"={F2}-{G2}"); ws[I2] = var.pct(H2, G2)
-                Fc, G = f"J{r}", f"K{r}"
-                money, pcts, ncols = (B, C, D, F2, G2, H2), (E, I2), 11
-            else:
-                Fc, G = f"F{r}", f"G{r}"
-                money, pcts, ncols = (B, C, D), (E,), 7
-            ws[Fc] = var.fu(D, not spend_only)
-            ws[G] = var.flag(D, E, PL_E, PL_P)
-            for col in money:
-                ws[col].number_format = CUR; ws[col].font = F_BODY; ws[col].alignment = RIGHT
-            for col in pcts:
-                ws[col].number_format = PCT; ws[col].font = F_BODY; ws[col].alignment = RIGHT
-            ws[Fc].alignment = CENTER; ws[Fc].font = F_FU
-            ws[G].alignment = CENTER; ws[G].font = F_FLAG
-        for c in range(1, ncols + 1):
-            ws.cell(row=r, column=c).fill = band
-        ws.cell(row=r, column=1).alignment = LEFT
+        for col in L.span():
+            ws[f"{col}{r}"].fill = band
         ws.row_dimensions[r].height = 19
-        r += 1
+        rows.append(r); r += 1
     last = r - 1
 
     ws.cell(row=r, column=1, value="Total").font = F_SUB
-    if revenue_split:
-        for col in ("B", "C"):
-            ws[f"{col}{r}"] = f"=SUM({col}{first}:{col}{last})"
-        ws[f"E{r}"] = var.cell(f"=SUM(E{first}:E{last})")
-        ws[f"D{r}"] = f"=B{r}-C{r}"; ws[f"F{r}"] = var.cell(f"=D{r}-E{r}")
-        ws[f"G{r}"] = var.pct(f"F{r}", f"E{r}"); ws[f"H{r}"] = var.fu(f"F{r}", True)
-        num, pct_col, fu_col, ncols = ("B", "C", "D", "E", "F"), "G", "H", 8
-    elif ytd:
-        for col in ("B", "F"):
-            ws[f"{col}{r}"] = f"=SUM({col}{first}:{col}{last})"
-        for col in ("C", "G"):
-            ws[f"{col}{r}"] = var.cell(f"=SUM({col}{first}:{col}{last})")
-        ws[f"D{r}"] = var.cell(f"=B{r}-C{r}"); ws[f"E{r}"] = var.pct(f"D{r}", f"C{r}")
-        ws[f"H{r}"] = var.cell(f"=F{r}-G{r}"); ws[f"I{r}"] = var.pct(f"H{r}", f"G{r}")
-        ws[f"J{r}"] = var.fu(f"D{r}", not spend_only)
-        num, pct_col, fu_col, ncols = ("B", "C", "D", "F", "G", "H"), "E", "J", 11
-        ws[f"I{r}"].number_format = PCT; ws[f"I{r}"].font = F_SUB
-        ws[f"I{r}"].alignment = RIGHT
-    else:
-        ws[f"B{r}"] = f"=SUM(B{first}:B{last})"
-        ws[f"C{r}"] = var.cell(f"=SUM(C{first}:C{last})")
-        ws[f"D{r}"] = var.cell(f"=B{r}-C{r}"); ws[f"E{r}"] = var.pct(f"D{r}", f"C{r}")
-        ws[f"F{r}"] = var.fu(f"D{r}", not spend_only)
-        num, pct_col, fu_col, ncols = ("B", "C", "D"), "E", "F", 7
-    for col in num:
-        ws[f"{col}{r}"].number_format = CUR; ws[f"{col}{r}"].font = F_SUB
-        ws[f"{col}{r}"].alignment = RIGHT
-    ws[f"{pct_col}{r}"].number_format = PCT; ws[f"{pct_col}{r}"].font = F_SUB
-    ws[f"{pct_col}{r}"].alignment = RIGHT
-    ws[f"{fu_col}{r}"].alignment = CENTER; ws[f"{fu_col}{r}"].font = F_SUB
-    for c in range(1, ncols + 1):
-        cell = ws.cell(row=r, column=c); cell.fill = FILL_IVORY; cell.border = SUBTOTAL_TOP
+    ws.cell(row=r, column=1).alignment = LEFT
+    _sum_tail(ws, L, r, rows, higher=True, var=var)
+    for col in L.span():
+        ws[f"{col}{r}"].fill = FILL_IVORY
+        ws[f"{col}{r}"].border = TOTAL_TOP
     ws.row_dimensions[r].height = 24
+    rows.append(r)
 
-    # Through `r`, the total row: it carries the same verdict as the lines above
-    # and was the one cell left without a badge.
-    flag_rng = None if revenue_split else (f"K{first}:K{r}" if ytd else f"G{first}:G{r}")
-    badge_cf(ws, f"{fu_col}{first}:{fu_col}{r}", flag_rng)
-    if var:
-        # The variance sits in different columns per layout: F/G on the
-        # revenue-split sheet, D/E elsewhere, with a second YTD pair when the
-        # file spans months.
-        variance_cf(ws, f"F{first}:G{r}" if revenue_split else f"D{first}:E{r}",
-                    f"${fu_col}{first}")
-        if ytd and not revenue_split:
-            variance_cf(ws, f"H{first}:I{r}", f"${fu_col}{first}")
-    widths(ws, [26, 15, 15, 15, 15, 14, 9, 6] if revenue_split
-                else [30, 13, 13, 12, 9, 13, 13, 12, 9, 6, 11] if ytd
-                else [30, 15, 15, 15, 10, 6, 11, 2])
+    _report_cf(ws, L, first, r, rows, [], var=var)
+    ws.cell(row=r + 2, column=1,
+            value="Each entity's net income is its revenue less its spend, which is why "
+                  "the entities consolidate to the group P&L.").font = F_NOTE
+    widths(ws, L.widths(26))
+    fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 5, last + 2)
     ws.freeze_panes = f"A{first}"
 
@@ -397,107 +344,72 @@ def _group_expense_types(values: list[str]) -> list[tuple[str, list[str]]]:
     return groups
 
 
-def _expense_sheet(ws, groups, gl, glf, gll, L, period, var, perno=None, ytd=False):
-    """Expense report by type, grouped with subtotals, month and optional YTD."""
+def _expense_sheet(ws, groups, gl, glf, gll, GLC, period, var, perno=None):
+    """Expense report by type, grouped with subtotals."""
     hide_grid(ws)
-    meta = (f"Reporting month {period}  ·  with year to date  ·  \u20ac" if ytd
-            else f"Reporting month {period}  ·  \u20ac")
-    title_band(ws, "Expense Report · by expense type", meta, "K" if ytd else "G")
+    L = Layout(1)
+    title_band(ws, "Expense Report · by expense type",
+               f"Reporting month {period}  ·  with year to date  ·  \u20ac", L.last_col)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
-    dim, cat = R(L["expense_type"]), R(L["category"])
-    act, bud = R(L["actual"]), R(L["budget"])
-    mflt = f',{R(L["period_no"])},{perno}' if perno and "period_no" in L else ""
-    yflt = f',{R(L["period_no"])},"<={perno}"' if perno and "period_no" in L else ""
+    dim, cat = R(GLC["expense_type"]), R(GLC["category"])
+    act, bud = R(GLC["actual"]), R(GLC["budget"])
+    mflt, yflt = _filters(R, GLC, perno)
 
-    heads = (["Expense type", "Month Act", "Month Bud", "Month Var", "Var %",
-              "YTD Act", "YTD Bud", "YTD Var", "Var %", "F/U", "Flag"] if ytd else
-             ["Expense type", "Actual", "Budget", "Var (Bud)", "Var %", "F/U", "Flag"])
-    headers(ws, 5, heads, center_from=2, center_to=len(heads))
-    fu_col, flag_col = ("J", "K") if ytd else ("F", "G")
-    ncols = 11 if ytd else 7
+    headers(ws, 5, L.headers("Expense type"), center_from=2, center_to=L.ncols)
 
-    def write_row(r, label, formulas, bold, fill, border=False, level=0):
+    def write_line(r, et):
+        c = L.row(r)
+        crit = f'{cat},"<>Revenue",{dim},"{et}"'
+        ws[c["act"]] = f'=SUMIFS({act},{crit}{mflt})'
+        ws[c["bud"]] = var.cell(f'=SUMIFS({bud},{crit}{mflt})')
+        ws[c["yact"]] = f'=SUMIFS({act},{crit}{yflt})'
+        ws[c["ybud"]] = var.cell(f'=SUMIFS({bud},{crit}{yflt})')
+        ws[c["fybud"]] = var.cell(f'=SUMIFS({bud},{crit})')
+
+    def dress(r, label, *, bold, fill, border=False, level=0):
         cell = ws.cell(row=r, column=1, value=label)
         cell.font = F_SUB if bold else F_BODY
         cell.alignment = indent(level) if level else LEFT
-        for ref, val in formulas.items():
-            ws[f"{ref}{r}"] = val
-        money = ("B", "C", "D", "F", "G", "H") if ytd else ("B", "C", "D")
-        pcts = ("E", "I") if ytd else ("E",)
-        for col in money:
-            c = ws[f"{col}{r}"]; c.number_format = CUR
-            c.font = F_SUB if bold else F_BODY; c.alignment = RIGHT
-        for col in pcts:
-            c = ws[f"{col}{r}"]; c.number_format = PCT
-            c.font = F_SUB if bold else F_BODY; c.alignment = RIGHT
-        ws[f"{fu_col}{r}"].alignment = CENTER
-        ws[f"{fu_col}{r}"].font = F_FU
-        ws[f"{flag_col}{r}"].alignment = CENTER
-        ws[f"{flag_col}{r}"].font = F_FLAG
-        for c in range(1, ncols + 1):
-            cc = ws.cell(row=r, column=c); cc.fill = fill
+        for col in L.span():
+            cc = ws[f"{col}{r}"]; cc.fill = fill
             if border:
                 cc.border = SUBTOTAL_TOP
         ws.row_dimensions[r].height = 21 if bold else 18
 
-    def line_formulas(r, crit):
-        f = {"B": f'=SUMIFS({act},{cat},"<>Revenue"{crit}{mflt})',
-             "C": var.cell(f'=SUMIFS({bud},{cat},"<>Revenue"{crit}{mflt})'),
-             "D": var.cell(f"=B{r}-C{r}"), "E": var.pct(f"D{r}", f"C{r}")}
-        if ytd:
-            f |= {"F": f'=SUMIFS({act},{cat},"<>Revenue"{crit}{yflt})',
-                  "G": var.cell(f'=SUMIFS({bud},{cat},"<>Revenue"{crit}{yflt})'),
-                  "H": var.cell(f"=F{r}-G{r}"), "I": var.pct(f"H{r}", f"G{r}")}
-        f[fu_col] = var.fu(f"D{r}", False)
-        f[flag_col] = var.flag(f"D{r}", f"E{r}", PL_E, PL_P)
-        return f
-
-    def sum_formulas(r, rows):
-        actual_cols = ("B", "F") if ytd else ("B",)
-        budget_cols = ("C", "G") if ytd else ("C",)
-        f = {c: "=" + "+".join(f"{c}{x}" for x in rows) for c in actual_cols}
-        f |= {c: var.cell("=" + "+".join(f"{c}{x}" for x in rows)) for c in budget_cols}
-        f |= {"D": var.cell(f"=B{r}-C{r}"), "E": var.pct(f"D{r}", f"C{r}")}
-        if ytd:
-            f |= {"H": var.cell(f"=F{r}-G{r}"), "I": var.pct(f"H{r}", f"G{r}")}
-        f[fu_col] = var.fu(f"D{r}", False)
-        f[flag_col] = var.flag(f"D{r}", f"E{r}", PL_E, PL_P)
-        return f
-
-    first, r, group_rows = 6, 6, []
+    first, r, group_rows, all_rows = 6, 6, [], []
     for gname, types in groups:
         # A group holding one type needs no separate subtotal line.
         single = len(types) == 1
         type_rows = []
         for i, et in enumerate(types):
-            fill = FILL_IVORY if single else (band_fill(i))
-            write_row(r, et, line_formulas(r, f',{dim},"{et}"'),
-                      bold=single, fill=fill, border=single, level=0 if single else 1)
-            type_rows.append(r); r += 1
+            write_line(r, et)
+            _tail(ws, L, r, higher=False, bold=single, var=var)
+            dress(r, et, bold=single, fill=FILL_IVORY if single else band_fill(i),
+                  border=single, level=0 if single else 1)
+            type_rows.append(r); all_rows.append(r); r += 1
         if single:
             group_rows.append(type_rows[0])
             continue
-        write_row(r, gname, sum_formulas(r, type_rows), bold=True,
-                  fill=FILL_IVORY, border=True)
-        group_rows.append(r); r += 1
+        _sum_tail(ws, L, r, type_rows, higher=False, var=var)
+        dress(r, gname, bold=True, fill=FILL_IVORY, border=True)
+        group_rows.append(r); all_rows.append(r); r += 1
     last = r - 1
 
-    write_row(r, "Total expenses", sum_formulas(r, group_rows), bold=True,
-              fill=FILL_IVORY, border=True)
-    for c in range(1, ncols + 1):
-        ws.cell(row=r, column=c).border = TOTAL_TOP
+    _sum_tail(ws, L, r, group_rows, higher=False, var=var)
+    dress(r, "Total expenses", bold=True, fill=FILL_IVORY)
+    for col in L.span():
+        ws[f"{col}{r}"].border = TOTAL_TOP
+    ws.row_dimensions[r].height = 24
+    all_rows.append(r)
 
-    badge_cf(ws, f"{fu_col}{first}:{fu_col}{r}", f"{flag_col}{first}:{flag_col}{r}")
-    if var:
-        spend_variance_cf(ws, f"D{first}:E{r}")
-        if ytd:
-            spend_variance_cf(ws, f"H{first}:I{r}")
+    _report_cf(ws, L, first, r, [], all_rows, var=var)
     ws.cell(row=r + 2, column=1,
             value="Grouped as a cost owner reads them: personnel first, then other "
                   "operating costs, cost of sales, and non-cash and financing items. "
-                  "Bold rows are group subtotals.").font = F_NOTE
-    widths(ws, [30, 13, 13, 12, 9, 13, 13, 12, 9, 6, 11] if ytd
-                else [30, 15, 15, 15, 10, 6, 11])
+                  "Bold rows are group subtotals. Every line is a cost, so an overspend "
+                  "is unfavourable whichever timeframe it shows up in.").font = F_NOTE
+    widths(ws, L.widths(30))
+    fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 5, last + 3)
     ws.freeze_panes = f"B{first}"
 
@@ -505,83 +417,69 @@ def _expense_sheet(ws, groups, gl, glf, gll, L, period, var, perno=None, ytd=Fal
 # ---------------------------------------------------------------------------
 # Departments & cost centres (hierarchy read from the data)
 # ---------------------------------------------------------------------------
-def _departments(ws, hierarchy, gl, glf, gll, L, period, has_cc, var, perno=None):
+def _departments(ws, hierarchy, gl, glf, gll, GLC, period, has_cc, var, perno=None):
     hide_grid(ws)
+    L = Layout(1)
     title_band(ws, "Departments & Cost Centres · spend variance",
-                   f"Reporting month {period}  ·  \u20ac", "G")
-    headers(ws, 5, ["Department / Cost centre", "Actual", "Budget", "Var (Bud)",
-                        "Var %", "F/U", "Flag"], center_from=2, center_to=7)
+               f"Reporting month {period}  ·  with year to date  ·  \u20ac", L.last_col)
+    headers(ws, 5, L.headers("Department / Cost centre"), center_from=2,
+            center_to=L.ncols)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
-    dep, cat = R(L["department"]), R(L["category"])
-    act, bud = R(L["actual"]), R(L["budget"])
-    cc = R(L["cost_centre"]) if has_cc else None
-    mflt = f',{R(L["period_no"])},{perno}' if perno and "period_no" in L else ""
+    dep, cat = R(GLC["department"]), R(GLC["category"])
+    act, bud = R(GLC["actual"]), R(GLC["budget"])
+    cc = R(GLC["cost_centre"]) if has_cc else None
+    mflt, yflt = _filters(R, GLC, perno)
 
-    first, r, dept_rows = 6, 6, []
+    def write_line(r, dim, key):
+        c = L.row(r)
+        crit = f'{dim},"{key}",{cat},"<>Revenue"'
+        ws[c["act"]] = f'=SUMIFS({act},{crit}{mflt})'
+        ws[c["bud"]] = var.cell(f'=SUMIFS({bud},{crit}{mflt})')
+        ws[c["yact"]] = f'=SUMIFS({act},{crit}{yflt})'
+        ws[c["ybud"]] = var.cell(f'=SUMIFS({bud},{crit}{yflt})')
+        ws[c["fybud"]] = var.cell(f'=SUMIFS({bud},{crit})')
+
+    first, r, dept_rows, all_rows = 6, 6, [], []
     for dept, ccs in hierarchy.items():
-        B, C, D, E, Fc, G = f"B{r}", f"C{r}", f"D{r}", f"E{r}", f"F{r}", f"G{r}"
         ws.cell(row=r, column=1, value=dept).font = F_SUB
         ws.cell(row=r, column=1).alignment = LEFT
-        ws[B] = f'=SUMIFS({act},{dep},"{dept}",{cat},"<>Revenue"{mflt})'
-        ws[C] = var.cell(f'=SUMIFS({bud},{dep},"{dept}",{cat},"<>Revenue"{mflt})')
-        ws[D] = var.cell(f"={B}-{C}"); ws[E] = var.pct(D, C)
-        ws[Fc] = var.fu(D, False); ws[G] = var.flag(D, E, PL_E, PL_P)
-        for col in (B, C, D):
-            ws[col].number_format = CUR; ws[col].font = F_SUB; ws[col].alignment = RIGHT
-        ws[E].number_format = PCT; ws[E].font = F_SUB; ws[E].alignment = RIGHT
-        ws[Fc].alignment = CENTER; ws[Fc].font = F_FU
-        ws[G].alignment = CENTER; ws[G].font = F_FLAG
-        for c in range(1, 8):
-            ws.cell(row=r, column=c).fill = FILL_IVORY
-            ws.cell(row=r, column=c).border = SUBTOTAL_TOP
+        write_line(r, dep, dept)
+        _tail(ws, L, r, higher=False, bold=True, var=var)
+        for col in L.span():
+            ws[f"{col}{r}"].fill = FILL_IVORY
+            ws[f"{col}{r}"].border = SUBTOTAL_TOP
         ws.row_dimensions[r].height = 22
-        dept_rows.append(r); r += 1
+        dept_rows.append(r); all_rows.append(r); r += 1
 
         if has_cc:
             for i, c_name in enumerate(ccs):
-                B, C, D, E, Fc, G = f"B{r}", f"C{r}", f"D{r}", f"E{r}", f"F{r}", f"G{r}"
                 lab = ws.cell(row=r, column=1, value=str(c_name))
                 lab.font = F_BODY
                 lab.alignment = indent(2)
-                ws[B] = f'=SUMIFS({act},{cc},"{c_name}",{cat},"<>Revenue"{mflt})'
-                ws[C] = var.cell(f'=SUMIFS({bud},{cc},"{c_name}",{cat},"<>Revenue"{mflt})')
-                ws[D] = var.cell(f"={B}-{C}"); ws[E] = var.pct(D, C)
-                ws[Fc] = var.fu(D, False); ws[G] = var.flag(D, E, PL_E, PL_P)
+                write_line(r, cc, c_name)
+                _tail(ws, L, r, higher=False, var=var)
                 band = band_fill(i)
-                for col in (B, C, D):
-                    ws[col].number_format = CUR; ws[col].font = F_BODY; ws[col].alignment = RIGHT
-                ws[E].number_format = PCT; ws[E].font = F_BODY; ws[E].alignment = RIGHT
-                ws[Fc].alignment = CENTER
-                ws[Fc].font = F_FU
-                ws[G].alignment = CENTER
-                ws[G].font = F_FLAG
-                for c in range(1, 8):
-                    ws.cell(row=r, column=c).fill = band
+                for col in L.span():
+                    ws[f"{col}{r}"].fill = band
                 ws.row_dimensions[r].height = 18
-                r += 1
+                all_rows.append(r); r += 1
     last = r - 1
 
     ws.cell(row=r, column=1, value="Total spend").font = F_SUB
-    ws[f"B{r}"] = "=" + "+".join(f"B{d}" for d in dept_rows)
-    ws[f"C{r}"] = var.cell("=" + "+".join(f"C{d}" for d in dept_rows))
-    ws[f"D{r}"] = var.cell(f"=B{r}-C{r}"); ws[f"E{r}"] = var.pct(f"D{r}", f"C{r}")
-    ws[f"F{r}"] = var.fu(f"D{r}", False)
-    for col in ("B", "C", "D"):
-        ws[f"{col}{r}"].number_format = CUR; ws[f"{col}{r}"].font = F_SUB
-        ws[f"{col}{r}"].alignment = RIGHT
-    ws[f"E{r}"].number_format = PCT; ws[f"E{r}"].font = F_SUB; ws[f"E{r}"].alignment = RIGHT
-    ws[f"F{r}"].alignment = CENTER; ws[f"F{r}"].font = F_SUB
-    for c in range(1, 8):
-        cell = ws.cell(row=r, column=c); cell.fill = FILL_IVORY
-        cell.border = TOTAL_TOP
+    ws.cell(row=r, column=1).alignment = LEFT
+    _sum_tail(ws, L, r, dept_rows, higher=False, var=var)
+    for col in L.span():
+        ws[f"{col}{r}"].fill = FILL_IVORY
+        ws[f"{col}{r}"].border = TOTAL_TOP
     ws.row_dimensions[r].height = 24
-    badge_cf(ws, f"F{first}:F{r}", f"G{first}:G{r}")
-    if var:
-        variance_cf(ws, f"D{first}:E{r}", f"$F{first}")
+    all_rows.append(r)
+
+    _report_cf(ws, L, first, r, [], all_rows, var=var)
     ws.cell(row=r + 2, column=1,
             value="Departments are roll-ups; cost centres are indented beneath them. "
-                  "Revenue is excluded: this is a spend view.").font = F_NOTE
-    widths(ws, [32, 15, 15, 15, 10, 6, 11])
+                  "Totals sum the departments only. Revenue is excluded: this is a "
+                  "spend view.").font = F_NOTE
+    widths(ws, L.widths(32))
     fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 5, last + 3)
     ws.freeze_panes = f"A{first}"
@@ -590,14 +488,16 @@ def _departments(ws, hierarchy, gl, glf, gll, L, period, has_cc, var, perno=None
 # ---------------------------------------------------------------------------
 # Drivers
 # ---------------------------------------------------------------------------
-def _drivers(ws, agg, gl, glf, gll, L, period, var, perno=None):
+def _drivers(ws, agg, gl, glf, gll, GLC, period, var, perno=None):
     hide_grid(ws)
-    title_band(ws, "Variance Drivers · account level", f"Reporting month {period}  ·  \u20ac", "I")
-    headers(ws, 5, ["Account", "Account name", "Category", "Actual", "Budget",
-                        "Var (Bud)", "Var %", "F/U", "Flag"], center_from=4, center_to=9)
+    L = Layout(3)
+    title_band(ws, "Variance Drivers · account level",
+               f"Reporting month {period}  ·  with year to date  ·  \u20ac", L.last_col)
+    headers(ws, 5, L.headers("Account", "Account name", "Category"),
+            center_from=4, center_to=L.ncols)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
-    code_r, act, bud = R(L["account_code"]), R(L["actual"]), R(L["budget"])
-    mflt = f',{R(L["period_no"])},{perno}' if perno and "period_no" in L else ""
+    code_r, act, bud = R(GLC["account_code"]), R(GLC["actual"]), R(GLC["budget"])
+    mflt, yflt = _filters(R, GLC, perno)
     keep = agg
     if perno and "period_no" in agg.columns:
         keep = agg[agg["period_no"] == perno]
@@ -607,39 +507,33 @@ def _drivers(ws, agg, gl, glf, gll, L, period, var, perno=None):
     tmp = tmp.sort_values("_var", key=lambda s: s.abs(), ascending=False)
 
     first, r = 6, 6
+    rows_higher, rows_lower = [], []
     for i, (_, row) in enumerate(tmp.iterrows()):
-        favdir = CATEGORY_FAVOURABLE.get(row["category"], FAV_HIGHER)
+        higher = CATEGORY_FAVOURABLE.get(row["category"], FAV_HIGHER) == FAV_HIGHER
         code = str(row["account_code"])
-        band = band_fill(i)
-        D, E, Fc, G, H, I = f"D{r}", f"E{r}", f"F{r}", f"G{r}", f"H{r}", f"I{r}"
-        ws.cell(row=r, column=1, value=str(row["account_code"])).font = F_BODY
+        c = L.row(r)
+        ws.cell(row=r, column=1, value=code).font = F_BODY
         ws.cell(row=r, column=2, value=str(row["account_name"])).font = F_BODY
         ws.cell(row=r, column=3, value=str(row["category"])).font = F_BODY
-        ws[D] = f'=SUMIFS({act},{code_r},"{code}"{mflt})'
-        ws[E] = var.cell(f'=SUMIFS({bud},{code_r},"{code}"{mflt})')
-        for col in (D, E):
-            ws[col].number_format = CUR; ws[col].font = F_BODY; ws[col].alignment = RIGHT
-        ws[Fc] = var.cell(f"={D}-{E}"); ws[Fc].number_format = CUR; ws[Fc].font = F_BODY
-        ws[Fc].alignment = RIGHT
-        ws[G] = var.pct(Fc, E); ws[G].number_format = PCT; ws[G].font = F_BODY
-        ws[G].alignment = RIGHT
-        ws[H] = var.fu(Fc, favdir == FAV_HIGHER)
-        ws[H].alignment = CENTER; ws[H].font = F_FU
-        ws[I] = var.flag(Fc, G, PL_E, PL_P)
-        ws[I].alignment = CENTER; ws[I].font = F_FLAG
-        for c in range(1, 10):
-            ws.cell(row=r, column=c).fill = band
-            if c <= 3:
-                ws.cell(row=r, column=c).alignment = LEFT
+        ws[c["act"]] = f'=SUMIFS({act},{code_r},"{code}"{mflt})'
+        ws[c["bud"]] = var.cell(f'=SUMIFS({bud},{code_r},"{code}"{mflt})')
+        ws[c["yact"]] = f'=SUMIFS({act},{code_r},"{code}"{yflt})'
+        ws[c["ybud"]] = var.cell(f'=SUMIFS({bud},{code_r},"{code}"{yflt})')
+        ws[c["fybud"]] = var.cell(f'=SUMIFS({bud},{code_r},"{code}")')
+        _tail(ws, L, r, higher=higher, var=var)
+        band = band_fill(i)
+        for col in L.span():
+            ws[f"{col}{r}"].fill = band
+        for col in ("A", "B", "C"):
+            ws[f"{col}{r}"].alignment = LEFT
         ws.row_dimensions[r].height = 18
+        (rows_higher if higher else rows_lower).append(r)
         r += 1
     last = r - 1
-    ws.conditional_formatting.add(f"F{first}:F{last}",
+    ws.conditional_formatting.add(f"{L.var}{first}:{L.var}{last}",
         DataBarRule(start_type="min", end_type="max", color=BAR, showValue=True))
-    badge_cf(ws, f"H{first}:H{last}", f"I{first}:I{last}")
-    if var:
-        variance_cf(ws, f"F{first}:G{last}", f"$H{first}")
-    widths(ws, [12, 30, 12, 15, 15, 15, 10, 6, 11])
+    _report_cf(ws, L, first, last, rows_higher, rows_lower, var=var)
+    widths(ws, L.widths(12, 30, 12))
     fit_text_columns(ws, ["B", "C"], first, last)
     quiet_indicators(ws, 5, last)
     ws.freeze_panes = f"A{first}"
@@ -680,7 +574,10 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
         period = period or latest
         perno = ingest.period_key(period)
     period = period or "current period"
-    ytd = has_period and len(all_periods) > 1 and perno is not None
+    # Every sheet carries the month, the year to date and the full year whatever
+    # the file holds. When the file holds one period the three describe the same
+    # postings, which the pack states rather than leaves the reader to notice.
+    single_period = not (has_period and len(all_periods) > 1 and perno is not None)
 
     dims = [k for k, _l, _w in OPTIONAL_DIMS if _present(agg, k)]
     gl_dims = (["period"] if has_period else []) + dims
@@ -703,9 +600,9 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
 
     wb = Workbook()
     ws_gl = wb.active; ws_gl.title = "GL Input"
-    glf, gll, L = _gl_input(ws_gl, agg, period, gl_dims, budgeted)
-    _pnl(wb.create_sheet("P&L Report"), "GL Input", glf, gll, L, period,
-         comments, report, var, perno, ytd)
+    glf, gll, GLC = _gl_input(ws_gl, agg, period, gl_dims, budgeted)
+    _pnl(wb.create_sheet("P&L Report"), "GL Input", glf, gll, GLC, period,
+         comments, report, var, perno, single_period)
 
     order = ["P&L Report"]
     if "expense_type" in dims:
@@ -713,14 +610,13 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
                 if v and v != "(multiple)"]
         if vals:
             _expense_sheet(wb.create_sheet("Expense Report"), _group_expense_types(vals),
-                           "GL Input", glf, gll, L, period, var, perno, ytd)
+                           "GL Input", glf, gll, GLC, period, var, perno)
             order.append("Expense Report")
     if "entity" in dims:
         vals = [v for v in month["entity"].unique() if v and v != "(multiple)"]
         if len(vals) > 1:
-            _dimension_sheet(wb.create_sheet("By Entity"), sorted(vals), "GL Input",
-                             glf, gll, L, period, "By Entity · consolidation",
-                             "Entity", "entity", var, revenue_split=True, perno=perno)
+            _by_entity(wb.create_sheet("By Entity"), sorted(vals), "GL Input",
+                       glf, gll, GLC, period, var, perno)
             order.append("By Entity")
     if "department" in dims:
         spend = month[month["category"] != "Revenue"]
@@ -732,11 +628,11 @@ def build_client_pack(agg: pd.DataFrame, period: str | None = None,
             hierarchy[dept] = ccs
         if hierarchy:
             _departments(wb.create_sheet("Departments & CCs"), hierarchy, "GL Input",
-                         glf, gll, L, period, has_cc and any(hierarchy.values()),
+                         glf, gll, GLC, period, has_cc and any(hierarchy.values()),
                          var, perno)
             order.append("Departments & CCs")
 
-    _drivers(wb.create_sheet("Drivers"), agg, "GL Input", glf, gll, L, period, var, perno)
+    _drivers(wb.create_sheet("Drivers"), agg, "GL Input", glf, gll, GLC, period, var, perno)
     order += ["Drivers", "GL Input"]
     for i, name in enumerate(order):
         wb.move_sheet(name, -wb.sheetnames.index(name) + i)

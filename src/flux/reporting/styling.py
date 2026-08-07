@@ -32,6 +32,9 @@ WHITE = "FFFFFF"
 GREEN_FILL = "E7F1E8"; GREEN_INK = "2E6B3E"
 RED_FILL = "F6E4E4"; RED_INK = "A63A3A"
 AMBER_FILL = "FBEEDA"; AMBER_INK = "8A5A00"
+# A third badge tone: the flag now names a timeframe rather than saying only
+# "material", so MONTH, YTD and BOTH need to be told apart at a glance.
+BLUE_FILL = "E6ECF7"; BLUE_INK = "31518C"
 BAR = "8AA0CC"
 
 F_TITLE = Font(name=FONT, size=20, bold=True, color=WHITE)
@@ -59,6 +62,7 @@ FILL_LEVER = PatternFill("solid", fgColor="FFF7DE")
 FILL_GREEN = PatternFill("solid", fgColor=GREEN_FILL)
 FILL_RED = PatternFill("solid", fgColor=RED_FILL)
 FILL_AMBER = PatternFill("solid", fgColor=AMBER_FILL)
+FILL_BLUE = PatternFill("solid", fgColor=BLUE_FILL)
 
 
 # ---------------------------------------------------------------------------
@@ -238,8 +242,39 @@ def outline(ws, r1, c1, r2, c2, side=GOLD_SIDE) -> None:
             )
 
 
+# The flag now names a timeframe rather than asserting a single verdict, so each
+# value gets its own weight: a month-only movement is the new news, a
+# year-to-date-only one is a pattern the month happens not to show, and BOTH is
+# both at once - the line a reader should look at first.
+FLAG_BADGES = {
+    "MONTH": (FILL_AMBER, AMBER_INK),
+    "YTD": (FILL_BLUE, BLUE_INK),
+    "BOTH": (FILL_RED, RED_INK),
+}
+
+
+def lever(ws, label_range: str, label: str, cell: str, value,
+          number_format: str) -> None:
+    """One editable assumption: a caption and a boxed input cell.
+
+    Three of these now sit on the P&L - two materiality floors and months
+    elapsed - and every other sheet points at them, so they are written from one
+    place rather than described twice in two packs.
+    """
+    ws.merge_cells(label_range)
+    head = label_range.split(":")[0]
+    ws[head] = label; ws[head].font = F_LABEL; ws[head].alignment = LEFT
+    ws[cell] = value
+    ws[cell].font = F_INPUT
+    ws[cell].number_format = number_format
+    ws[cell].fill = FILL_LEVER
+    ws[cell].alignment = CENTER
+    target = ws[cell]
+    outline(ws, target.row, target.column, target.row, target.column, GOLD_SIDE)
+
+
 def badge_cf(ws, rng_fu, rng_flag) -> None:
-    """Green/red F and U badges, amber MATERIAL badge."""
+    """Green/red F and U badges; amber MONTH, blue YTD and red BOTH flags."""
     if rng_fu:
         ws.conditional_formatting.add(rng_fu, CellIsRule(
             operator="equal", formula=['"F"'], fill=FILL_GREEN,
@@ -248,9 +283,14 @@ def badge_cf(ws, rng_fu, rng_flag) -> None:
             operator="equal", formula=['"U"'], fill=FILL_RED,
             font=Font(name=FONT, size=10, bold=True, color=RED_INK)))
     if rng_flag:
-        ws.conditional_formatting.add(rng_flag, CellIsRule(
-            operator="equal", formula=['"MATERIAL"'], fill=FILL_AMBER,
-            font=Font(name=FONT, size=9, bold=True, color=AMBER_INK)))
+        # BOTH first: Excel applies matching rules in order, and an "equal"
+        # test is exact, but keeping the strongest badge at the top means a
+        # later change to a prefix match cannot silently downgrade it.
+        for value in ("BOTH", "MONTH", "YTD"):
+            fill, ink = FLAG_BADGES[value]
+            ws.conditional_formatting.add(rng_flag, CellIsRule(
+                operator="equal", formula=[f'"{value}"'], fill=fill,
+                font=Font(name=FONT, size=9, bold=True, color=ink)))
 
 
 def variance_cf(ws, rng, fu_ref) -> None:
@@ -272,14 +312,56 @@ def variance_cf(ws, rng, fu_ref) -> None:
 
 
 def spend_variance_cf(ws, rng) -> None:
-    """Colour a variance range on a sheet with no F/U column.
+    """Colour a variance range where every line is a cost.
 
-    Every line there is a cost, so lower is better and the sign is enough.
+    Lower is better on all of them, so the sign is enough.
     """
     ws.conditional_formatting.add(rng, CellIsRule(
         operator="greaterThan", formula=["0"], font=Font(color=RED_INK)))
     ws.conditional_formatting.add(rng, CellIsRule(
         operator="lessThan", formula=["0"], font=Font(color=GREEN_INK)))
+
+
+def signed_variance_cf(ws, ranges, higher_is_better: bool) -> None:
+    """Colour a variance range whose favourable direction is known at build time.
+
+    The sheet carries one F/U column but three variances - month, year to date
+    and against the full-year plan - and they do not always share a sign. Only
+    the month variance can be driven from the badge; the other two are coloured
+    from the direction the line actually has, which is known when the row is
+    written.
+
+    `ranges` is a whitespace-separated sqref, so the rows sharing a direction on
+    a mixed sheet are collected into one rule instead of one rule per row.
+    """
+    if not ranges:
+        return
+    good, bad = ("greaterThan", "lessThan") if higher_is_better else ("lessThan", "greaterThan")
+    ws.conditional_formatting.add(ranges, CellIsRule(
+        operator=good, formula=["0"], font=Font(color=GREEN_INK)))
+    ws.conditional_formatting.add(ranges, CellIsRule(
+        operator=bad, formula=["0"], font=Font(color=RED_INK)))
+
+
+def sqref(cols, rows) -> str:
+    """A whitespace-separated range covering `cols` on each row in `rows`.
+
+    Consecutive rows are merged into one range so the sqref stays short: Excel
+    accepts a list of single cells, but a rule written that way is unreadable in
+    the manager dialog and slow to open on a sheet of any size.
+    """
+    rows = sorted(set(rows))
+    if not rows or not cols:
+        return ""
+    blocks, start, prev = [], rows[0], rows[0]
+    for row in rows[1:]:
+        if row == prev + 1:
+            prev = row
+            continue
+        blocks.append((start, prev)); start = prev = row
+    blocks.append((start, prev))
+    first_col, last_col = cols[0], cols[-1]
+    return " ".join(f"{first_col}{a}:{last_col}{b}" for a, b in blocks)
 
 
 def note(ws, row, text) -> None:

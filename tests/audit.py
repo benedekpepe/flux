@@ -17,7 +17,9 @@ Checks, in the order a reviewer would ask about them:
     9  expense grouping, including unknown client-specific types
    10  cross-view reconciliation: P&L, entity, department and expense views
        all tie to the same source
-   11  both generated workbooks: structure, and the actuals-only contract
+   11  both generated workbooks: the shared column layout every reporting
+       sheet now carries, the single lever cells behind it, structure, and the
+       actuals-only contract
    12  edge cases and the app module
 
 Exits non-zero on any failure.
@@ -460,8 +462,9 @@ def _header_columns(ws) -> dict:
         found = {}
         for col in range(1, ws.max_column + 1):
             value = ws.cell(row=header_row, column=col).value
-            # First occurrence wins: a P&L carries two "Var %" columns, one for
-            # budget and one for prior year, and only the budget one is coloured.
+            # First occurrence wins: every sheet carries two "Var %" columns,
+            # one for the month and one for the year to date, and the month one
+            # is the one coloured from the F/U badge beside it.
             if isinstance(value, str) and value.strip() and value.strip() not in found:
                 found[value.strip()] = get_column_letter(col)
         if "F/U" in found:
@@ -474,6 +477,66 @@ def _total_rows(ws) -> list[int]:
             if isinstance(ws.cell(row=r, column=1).value, str)
             and ws.cell(row=r, column=1).value.lower().startswith(
                 ("total", "consolidated", "net income"))]
+
+
+def _report_header(ws):
+    """The header row of a reporting sheet, and its labels.
+
+    Reporting sheets put their headers on row 5, except the P&L, which uses row
+    10 to leave space for the KPI cards and the lever cells above them.
+    """
+    for hrow in (5, 10):
+        labels = [ws.cell(row=hrow, column=c).value
+                  for c in range(1, ws.max_column + 1)]
+        if "Flag" in labels:
+            return hrow, labels
+    return None, []
+
+
+def _check_report_layout(wb, label: str) -> None:
+    """Every reporting sheet carries the same columns and the same levers.
+
+    This is the check the pack did not have when the sheets diverged: the P&L
+    showed a year to date the expense report did not, the outlook sheet was the
+    only one with a projection, and the flag meant "material" on one sheet and
+    "material this month" on another. Reading the headers back off the saved
+    workbook is the only way to catch that, because each sheet builds its own
+    formulas and any of them can drift alone.
+    """
+    from flux.reporting.formulas import CORE_HEADERS
+
+    checked = 0
+    for name in wb.sheetnames:
+        ws = wb[name]
+        hrow, labels = _report_header(ws)
+        if hrow is None:
+            continue                      # an input sheet, not a report
+        checked += 1
+        start = labels.index("Month Act") if "Month Act" in labels else -1
+        core = tuple(labels[start:start + len(CORE_HEADERS)]) if start >= 0 else ()
+        check(f"{label}: '{name}' carries the shared column set",
+              core == CORE_HEADERS, f"got {core}")
+        trailing = [x for x in labels[start + len(CORE_HEADERS):] if x]
+        check(f"{label}: '{name}' adds nothing after the flag but commentary",
+              trailing in ([], ["Commentary"]), str(trailing))
+        if start < 0:
+            continue
+
+        # Both levered columns must point at the P&L's cells, not at a local
+        # copy: one edit has to re-flag and re-project the whole pack.
+        first = hrow + 1
+        flag = str(ws.cell(row=first, column=start + len(CORE_HEADERS)).value or "")
+        rate = str(ws.cell(row=first, column=start + 10).value or "")
+        owns_levers = name == "P&L Report"
+        prefix = "" if owns_levers else "'P&L Report'!"
+        check(f"{label}: '{name}' flags against the shared materiality levers",
+              f"{prefix}$C$9" in flag and f"{prefix}$G$9" in flag, flag[:90])
+        check(f"{label}: '{name}' names the material timeframe",
+              all(v in flag for v in ('"MONTH"', '"YTD"', '"BOTH"')), flag[:90])
+        check(f"{label}: '{name}' projects off the shared months lever",
+              f"{prefix}$K$9" in rate, rate[:90])
+    check(f"{label}: the layout check found the reporting sheets",
+          checked >= 2, f"{checked} sheets")
 
 
 def _check_total_row_formatting(wb, label: str) -> None:
@@ -490,7 +553,7 @@ def _check_total_row_formatting(wb, label: str) -> None:
             continue
         covered = _cf_cells(ws)
         headers = _header_columns(ws)
-        watched = [headers[h] for h in ("F/U", "Var (Bud)", "Var %")
+        watched = [headers[h] for h in ("F/U", "Month Var", "Var %")
                    if h in headers]
         if not watched:
             continue
@@ -505,7 +568,7 @@ def test_workbooks() -> None:
 
     demo = build_demo_pack(PERIOD, tmp / "demo.xlsx")
     wb = _load(demo)
-    expected = ["P&L Report", "Outlook", "Expense Report", "By Entity",
+    expected = ["P&L Report", "Expense Report", "By Entity",
                 "Departments & CCs", "Drivers", "Budget", "GL Transactions"]
     check("Demo pack has every sheet in reading order",
           wb.sheetnames == expected, str(wb.sheetnames))
@@ -517,6 +580,11 @@ def test_workbooks() -> None:
           str(wb["P&L Report"]["B11"].value))
     check("Materiality levers are present and editable",
           wb["P&L Report"]["C9"].value == 25_000 and wb["P&L Report"]["G9"].value == 0.10)
+    check("Months elapsed is a lever on the P&L, not a constant in the formulas",
+          wb["P&L Report"]["K9"].value == 6, str(wb["P&L Report"]["K9"].value))
+
+    # The whole point of the rebuild: one column set, one set of levers.
+    _check_report_layout(wb, "Demo pack")
 
     # A total row is the line a reader looks at first, and it is the one an
     # off-by-one in a formatting range silently drops: the detail above it goes
@@ -543,6 +611,7 @@ def test_workbooks() -> None:
           {"P&L Report", "Drivers", "GL Input"} <= set(wbc.sheetnames), str(wbc.sheetnames))
     check("Client P&L is formula-driven",
           str(wbc["P&L Report"]["B11"].value).startswith("="))
+    _check_report_layout(wbc, "Client pack")
 
     _check_total_row_formatting(wbc, "Client pack")
 
@@ -560,9 +629,18 @@ def test_workbooks() -> None:
     check("Budget and variance cells are left empty, not zeroed", empty,
           str([pnl[f"{c}11"].value for c in "CDE"]))
     check("No F/U badge is claimed without a budget",
-          pnl["I11"].value in (None, ""), str(pnl["I11"].value))
+          pnl["M11"].value in (None, ""), str(pnl["M11"].value))
+    check("No materiality flag is claimed without a budget",
+          pnl["N11"].value in (None, ""), str(pnl["N11"].value))
     check("Inert materiality levers are omitted",
           pnl["C9"].value is None, str(pnl["C9"].value))
+    # The run rate needs actuals and a month count, not a plan, so it survives.
+    check("The run rate still projects without a budget",
+          str(pnl["K11"].value).startswith("="), str(pnl["K11"].value))
+    check("Months elapsed stays a lever without a budget",
+          isinstance(pnl["K9"].value, int), str(pnl["K9"].value))
+    check("Var to FY is left empty without a full-year plan",
+          pnl["L11"].value in (None, ""), str(pnl["L11"].value))
 
     rep_nb = build_report(actuals)
     check("The engine reports nothing material without a budget",

@@ -37,10 +37,16 @@ automates.
 - **Favourable / unfavourable by account type** — revenue and profit lines are
   "higher is better", cost lines are "lower is better", so an overspend never
   reads as good news because the number went up.
-- **Two-condition materiality** — an item is flagged only when it clears both an
-  absolute EUR floor and a percentage floor, so a 300% variance on a €4k line
-  doesn't crowd out the real movers. A near-zero base reads **n/m** and is judged
-  on the amount instead.
+- **Two-condition materiality, per timeframe** — an item is flagged only when it
+  clears both an absolute EUR floor and a percentage floor, so a 300% variance on
+  a €4k line doesn't crowd out the real movers. A near-zero base reads **n/m** and
+  is judged on the amount instead. The flag names *which* timeframe cleared both
+  floors — **MONTH**, **YTD** or **BOTH** — because a one-off overspend and a
+  pattern that has been building all year need different answers.
+- **One layout on every sheet** — the month, the year to date, the full-year plan
+  and where the run rate lands against it, then F/U and the flag. The sheets
+  differ in what they cut the ledger by, never in how they report it, so a reader
+  who has learnt the P&L has learnt the pack.
 - **Written commentary** per line and for the pack as a whole, generated from the
   actual drivers.
 - **Reads real ledger files** — accounting sign conventions, EU and US number
@@ -48,13 +54,13 @@ automates.
 
 ## Screenshots
 
-**Management P&L — month and year to date, with materiality flags and commentary**
+**Management P&L — month, year to date and full-year run rate, with the pack's three lever cells**
 
-![Management P&L with variances, F/U badges and per-line commentary](docs/pnl-report.png)
+![Management P&L with month and YTD variances, the run rate against the full-year plan, F/U badges, materiality flags and per-line commentary](docs/pnl-report.png)
 
-**Expense Report — month, year-to-date and full-year budget side by side**
+**Expense Report — the same columns, cut by expense type**
 
-![Expense report by expense type with month, YTD and full-year columns](docs/expense-report.png)
+![Expense report by expense type on the shared column layout](docs/expense-report.png)
 
 **By Entity — net income per legal entity, consolidating to the group P&L**
 
@@ -63,10 +69,6 @@ automates.
 **Departments & Cost Centres — spend roll-up with cost centres nested**
 
 ![Department spend variance with cost centres nested beneath each department](docs/departments.png)
-
-**Outlook — where the year lands on two stated assumptions**
-
-![Full-year projections by run rate and by plan for the rest, against the annual budget](docs/outlook.png)
 
 **PowerPoint deck — the same numbers as seven slides, for sending upward**
 
@@ -108,22 +110,56 @@ Both floors must be cleared:
 | Clears both | €130,000 | 30% | Yes |
 | Near-zero budget | €150,000 | n/m | Yes — judged on the amount |
 
-The two thresholds are **editable lever cells** on the P&L sheet, and every other
-sheet points at them. Change one number and the whole pack re-flags.
+The test runs twice on every line, once on the month and once on the year to
+date, and the flag says which one cleared:
 
-## Outlook
+| Flag | Reads as |
+| --- | --- |
+| **MONTH** | it moved this month, but the year to date is still on plan |
+| **YTD** | the month looks fine; the gap has been building since January |
+| **BOTH** | material this month *and* cumulatively — look here first |
+| *(blank)* | not material on either timeframe |
 
-The pack projects the full year two ways, because neither alone is honest:
+A single MATERIAL badge could not tell those apart, and the difference is the
+difference between a bad month and a trend.
+
+### The lever cells
+
+Three assumptions sit as **editable cells on the P&L sheet**, and every other
+sheet points at them rather than holding its own copy:
+
+| Cell | Lever |
+| --- | --- |
+| `C9` | materiality floor, EUR |
+| `G9` | materiality floor, % |
+| `K9` | months elapsed, which drives every run rate in the pack |
+
+Change one number and the whole pack re-flags or re-projects. That is enforced by
+the test suite, which reads the saved workbook back and checks that each sheet's
+flag and run-rate formulas reference the P&L's cells.
+
+## Where the year lands
+
+Every reporting sheet carries the full-year plan and the **run rate** against it:
+the year to date ÷ months elapsed × 12, and the gap between that and the budget.
+It used to live on a separate *Outlook* sheet, which meant the one question a
+reader asks after "how is the month?" was two clicks away from every cut of the
+data. Now every line answers it in place.
+
+Months elapsed is the `K9` lever on the P&L, so a reader who disagrees with the
+assumption changes one cell and watches the whole pack move.
+
+The deck goes further and shows a second projection beside the run rate:
 
 | Projection | Assumption |
 | --- | --- |
 | **Run rate** | the rest of the year behaves like the year so far — year to date ÷ months elapsed × 12 |
 | **Plan for the rest** | the remaining months hit budget — actual to date + the unspent part of the plan |
 
-The outcome usually sits between them, and the gap between the two is itself the
-message: it is the size of what the remaining months have to make up. Months
-elapsed is an editable cell on the workbook's *Outlook* sheet, so the
-projection recalculates for a different close without rebuilding the pack.
+The outcome usually sits between them, and the gap is itself the message: it is
+the size of what the remaining months have to make up. The workbook carries the
+run rate only, because it repeats it on every line of every sheet and a second
+projected column on all of them would cost more width than it earns.
 
 Neither is a forecast. There is no seasonality, no pipeline and no assumed
 management action — they are arithmetic under a stated assumption, which is what
@@ -138,8 +174,9 @@ joined on account code.
 **If only actuals are supplied, the variance, F/U and materiality columns are
 left empty rather than measured against zero**, and the pack says so. A ledger
 compared against nothing would otherwise report every line as a 100% overspend
-and flag all of them. The prior-year comparison still works, because it does not
-depend on a plan.
+and flag all of them. The run rate is the exception: it is built from actuals and
+the months lever alone, so it still projects. Prior-year actuals are carried on
+the GL Input sheet, beside the figures they belong to.
 
 ## Reading real ledger files
 
@@ -172,7 +209,6 @@ a fiscal year must not be read as an amount, so Flux asks rather than assumes.
 | Sheet | Needs |
 | --- | --- |
 | P&L Report, Drivers, GL Input | always |
-| Outlook | more than one period |
 | Expense Report | an expense-type column |
 | Departments & Cost Centres | a department column (cost centre nests under it) |
 | By Entity | more than one entity |
@@ -181,7 +217,9 @@ The department-to-cost-centre hierarchy is read from the uploaded data, not from
 a fixed chart of accounts, so a client's own structure is respected. A period
 column keeps months apart: the reporting month is the **latest period that
 carries postings**, so a full-year budget beside six months of actuals still
-reports June, and a multi-period file gets a year-to-date view beside the month.
+reports June. Whichever sheets get built, they all carry the same columns; a
+file holding a single period says so on the P&L rather than leaving the reader
+to work out why the month and the year to date are identical.
 
 ## Commentary
 
@@ -210,10 +248,11 @@ flux/
 │   ├── synthetic_data.py        # seeded generator for the demo company
 │   └── reporting/
 │       ├── styling.py           # palette, type, number formats, sheet chrome
-│       ├── formulas.py          # Excel formula builders + materiality levers
+│       ├── formulas.py          # formula builders, lever cells, column layout
+│       ├── rows.py              # the report row every sheet writes the same way
 │       ├── demo_pack.py         # the multi-entity showcase, from generated data
 │       ├── client_pack.py       # the pack built from an ingested client file
-│       └── pptx_pack.py         # the five-slide management deck
+│       └── pptx_pack.py         # the seven-slide management deck
 ├── scripts/
 │   ├── demo.py                  # console P&L, drivers and commentary
 │   └── make_template.py         # builds data/input_template.xlsx
@@ -224,9 +263,13 @@ flux/
 └── .github/workflows/ci.yml     # lint, verification, pack build, app smoke test
 ```
 
-`styling` and `formulas` are shared by both packs, so the demo and the client
-pack render the same visual language and reach the same materiality verdict
-without either importing the other.
+`styling`, `formulas` and `rows` are shared by both packs, so the demo and the
+client pack render the same visual language and reach the same materiality
+verdict without either importing the other. A sheet supplies only the five
+figures it alone can know — the month actual and budget, the year-to-date pair
+and the full-year plan — and `rows` writes everything that follows. That is what
+stops the two packs reporting the same numbers two different ways, which is
+exactly what they had started doing.
 
 The demo chart of accounts covers 41 accounts, 17 expense types, 7 departments,
 19 cost centres, 3 legal entities and 3 currencies.
@@ -262,7 +305,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 130 checks` means everything is wired up correctly.
+`PASSED all 172 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -323,18 +366,23 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**130 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**172 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number
 being read as an amount), aggregation and the proportional budget join,
 reporting-period derivation, expense grouping, cross-view reconciliation, the
-structure of both generated workbooks and of the deck, the actuals-only
-contract, and edge cases. Exits non-zero on any failure.
+structure of both generated workbooks and of the deck, the shared column layout,
+the actuals-only contract, and edge cases. Exits non-zero on any failure.
 
-The reconciliation checks are the load-bearing ones: the entity, department,
-cost-centre and expense-type views must all tie to the same total as the P&L, and
-the P&L must tie to the source transactions.
+Two groups are the load-bearing ones. The **reconciliation** checks: the entity,
+department, cost-centre and expense-type views must all tie to the same total as
+the P&L, and the P&L must tie to the source transactions. The **layout** checks
+read the saved workbooks back and assert that every reporting sheet in both packs
+carries the same thirteen columns in the same order, and that its flag and
+run-rate formulas point at the P&L's lever cells rather than a local copy — the
+drift they catch is invisible in the source, because each sheet builds its own
+formulas and any one of them can wander off alone.
 
 They also run automatically on every push and pull request via GitHub Actions
 (Python 3.11 and 3.12), together with the linter, an import smoke test, an
@@ -366,6 +414,7 @@ every green run leaves a downloadable workbook.
 - [x] Public deploy (Streamlit Community Cloud).
 - [x] PowerPoint management pack (python-pptx).
 - [x] Year-to-date view and a run-rate outlook, in the workbook and the deck.
+- [x] One column layout across every reporting sheet, off shared lever cells.
 - [ ] Period-over-period trend view, from the periods already in the file.
 
 ## License
