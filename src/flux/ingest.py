@@ -292,6 +292,26 @@ def _coerce_amount(x):
     return -value if negative else value
 
 
+def year_to_date(std: pd.DataFrame, period: str) -> pd.DataFrame:
+    """Aggregate every period up to and including `period` to account level.
+
+    A file that spans several months already holds the year to date; this rolls
+    it up so the cumulative view can be reported beside the month. Returns an
+    empty frame when the data carries no periods, so callers can drop the
+    cumulative view rather than present the month twice under two labels.
+    """
+    if "period" not in std.columns:
+        return std.iloc[0:0]
+    cutoff = period_key(period)
+    if cutoff is None:
+        return std.iloc[0:0]
+    keys = std["period"].map(period_key)
+    upto = std[keys.notna() & (keys <= cutoff)]
+    if upto.empty or upto["period"].nunique() < 2:
+        return std.iloc[0:0]
+    return aggregate_to_accounts(upto.drop(columns=["period"]))
+
+
 def infer_category(code: str) -> str:
     c = str(code).strip()
     first = c[:1]

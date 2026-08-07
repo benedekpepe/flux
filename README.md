@@ -64,9 +64,9 @@ automates.
 
 ![Department spend variance with cost centres nested beneath each department](docs/departments.png)
 
-**PowerPoint deck — the same numbers as five slides, for sending upward**
+**PowerPoint deck — the same numbers as six slides, for sending upward**
 
-![Four slides of the generated management deck: cover, result, P&L and drivers](docs/pptx-pack.png)
+![Four slides of the generated management deck: cover, result, P&L and year to date](docs/pptx-pack.png)
 
 ## How it works
 
@@ -84,9 +84,12 @@ automates.
 5. **Excel pack** — the workbook is written with **live formulas over an input
    sheet**, so an edited input recalculates the whole pack. The sheets that get
    built depend on the dimensions present in the data.
-6. **Deck** — the same numbers as five slides: the result, the P&L, what moved
-   it, and where the money went. Native PowerPoint charts and tables, not
-   images, so the recipient can edit them.
+6. **Deck** — the same numbers as six slides: the result, the P&L, the year to
+   date, what moved it, and where the money went. Native PowerPoint charts and
+   tables, not images, so the recipient can edit them. The cumulative slide
+   compares the month against the average month so far, which is the difference
+   between a bad month and a trend; a single-period file drops that slide rather
+   than repeat the month under a cumulative heading.
 7. **App** — a Streamlit front end for upload, mapping confirmation, preview and
    download of either output.
 
@@ -236,7 +239,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 116 checks` means everything is wired up correctly.
+`PASSED all 120 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -297,7 +300,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**116 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**120 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

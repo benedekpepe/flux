@@ -355,6 +355,116 @@ def _pnl_table(prs, report, comments, period, budgeted):
 # ---------------------------------------------------------------------------
 # Slide 4 - what moved it
 # ---------------------------------------------------------------------------
+def _year_to_date(prs, ytd_report, month_report, months, period, budgeted):
+    """The cumulative view, and whether the month is typical of it.
+
+    A repeat of the monthly table under a different heading would add pages
+    without adding an answer. The question a cumulative slide exists to settle
+    is whether the month is a blip or the run rate, so the chart puts the
+    month's variance beside the average month of the year so far.
+    """
+    s = _blank(prs)
+    _slide_header(s, "Year to date", f"{months} months in",
+                  f"Through {period}  ·  EUR")
+
+    def line(report, label):
+        return report[report.line == label].iloc[0]
+
+    gap = Inches(0.34)
+    cw = (W - 2 * MARGIN - 2 * gap) / 3
+    for i, label in enumerate(("Revenue", "Operating income (EBIT)", "Net income")):
+        r = line(ytd_report, label)
+        _kpi_card(s, MARGIN + i * (cw + gap), Inches(1.62), cw, label, r.actual,
+                  f"{_signed(r.var_bud)} ({_pct(r.var_bud_pct)}) vs budget",
+                  r.fav_unfav == "F", budgeted)
+
+    cats = ["Revenue", "Cost of goods sold", "Operating expenses", "Other expenses"]
+    this_month = [float(line(month_report, c).var_bud) for c in cats]
+    average = [float(line(ytd_report, c).var_bud) / months for c in cats]
+
+    data = CategoryChartData()
+    data.categories = cats
+    data.add_series("Average month, year to date", tuple(average))
+    data.add_series(f"This month ({period})", tuple(this_month))
+
+    gf = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, MARGIN, Inches(3.45),
+                            Inches(8.1), Inches(3.3), data)
+    chart = gf.chart
+    chart.has_title = False
+    chart.has_legend = True
+    chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+    chart.legend.include_in_layout = False
+    chart.legend.font.size = Pt(10)
+    chart.legend.font.name = FONT
+    chart.plots[0].gap_width = 70
+    for series, colour in zip(chart.series, (SLATE, BRASS)):
+        series.format.fill.solid()
+        series.format.fill.fore_color.rgb = colour
+        series.invert_if_negative = False
+    for axis in (chart.category_axis, chart.value_axis):
+        axis.tick_labels.font.size = Pt(10)
+        axis.tick_labels.font.name = FONT
+        axis.tick_labels.font.color.rgb = INK
+    chart.category_axis.has_major_gridlines = False
+    # Category names go under the plot, not on the zero line, where a negative
+    # column would otherwise be drawn straight through them.
+    chart.category_axis.tick_label_position = XL_TICK_LABEL_POSITION.LOW
+    chart.value_axis.has_major_gridlines = True
+    chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(0xE4, 0xE7, 0xEC)
+    chart.value_axis.major_gridlines.format.line.width = Pt(0.75)
+    chart.value_axis.tick_labels.number_format = '#,##0;(#,##0)'
+    chart.value_axis.tick_labels.number_format_is_linked = False
+
+    # Name the read rather than leaving it to be inferred from two bar heights.
+    ni_m = line(month_report, "Net income")
+    ni_y = line(ytd_report, "Net income")
+    run_rate = ni_y.var_bud / months
+    worse = abs(ni_m.var_bud) > abs(run_rate) * 1.15
+    better = abs(ni_m.var_bud) < abs(run_rate) * 0.85
+    verdict = ("worse than the run rate" if worse
+               else "better than the run rate" if better
+               else "in line with the run rate")
+
+    # Which category departs furthest from its own run rate: the chart shows the
+    # gaps, this names the one worth asking about.
+    spreads = []
+    for c, m_var, avg in zip(cats, this_month, average):
+        if abs(avg) >= 1_000:
+            spreads.append((abs(m_var / avg), c, m_var, avg))
+    if spreads:
+        ratio, cat, m_var, avg = max(spreads)
+        outlier = (f"{cat}: {_mag(abs(m_var))} this month against an average "
+                   f"month of {_mag(abs(avg))} — {ratio:.1f}x.")
+    else:
+        outlier = "No category departs materially from its own run rate."
+
+    panel = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
+                               MARGIN + Inches(8.45), Inches(3.45),
+                               Inches(3.2), Inches(3.3))
+    panel.adjustments[0] = 0.07
+    _fill(panel, IVORY, line=BRASS, width=Pt(1))
+    runs = [("IS THE MONTH TYPICAL?", 11, True, BRASS), None,
+            (verdict.capitalize(), 17, True, NAVY), None,
+            (f"Net income is {_mag(abs(ni_y.var_bud))} behind plan over {months} "
+             f"months, an average of {_mag(abs(run_rate))} a month. This month was "
+             f"{_mag(abs(ni_m.var_bud))}.", 12, False, INK), None,
+            (f"Year to date {_signed(ni_y.var_bud)}", 12, True,
+             GREEN if ni_y.fav_unfav == "F" else RED), None,
+            ("THE LINE THAT DIVERGED MOST", 11, True, BRASS), None,
+            (outlier, 12, False, INK)]
+    _text(s, MARGIN + Inches(8.7), Inches(3.72), Inches(2.7), Inches(2.8), runs,
+          spacing=Pt(9))
+
+    s.notes_slide.notes_text_frame.text = (
+        "The cumulative variance divided by months elapsed gives the average "
+        "month. Comparing this month against it separates a one-off from a trend."
+    )
+    return s
+
+
+# ---------------------------------------------------------------------------
+# Slide - what moved it
+# ---------------------------------------------------------------------------
 def _drivers(prs, gl, materiality, period, budgeted):
     s = _blank(prs)
     _slide_header(s, "Drivers", "What moved the result", f"Reporting month {period}  ·  EUR")
@@ -537,6 +647,8 @@ def build_pptx_pack(gl: pd.DataFrame,
                     period: str,
                     out_path: str | Path,
                     detail: pd.DataFrame | None = None,
+                    ytd: pd.DataFrame | None = None,
+                    months: int | None = None,
                     entity: str = "Demo Company Ltd",
                     materiality: MaterialityRule | None = None,
                     budgeted: bool | None = None) -> Path:
@@ -548,6 +660,10 @@ def build_pptx_pack(gl: pd.DataFrame,
     period : reporting period label, e.g. "2025-06".
     detail : optional transaction-level frame carrying department and entity.
         Without it the spend slide is omitted rather than faked.
+    ytd : optional account-level frame cumulative to `period`. Without it the
+        cumulative slide is omitted; a single-period file has no year to date,
+        and repeating the month under that heading would be a lie.
+    months : periods elapsed, used for the average month. Derived as needed.
     budgeted : whether a plan exists; detected from the data when omitted.
     """
     materiality = materiality or MaterialityRule()
@@ -562,6 +678,10 @@ def build_pptx_pack(gl: pd.DataFrame,
     _cover(prs, entity, period, ni, budgeted)
     _result(prs, report, gl, period, budgeted)
     _pnl_table(prs, report, comments, period, budgeted)
+    if ytd is not None and not ytd.empty and budgeted:
+        elapsed = months or max(1, int(period[5:7]))
+        _year_to_date(prs, build_report(ytd, materiality, budgeted=True),
+                      report, elapsed, period, budgeted)
     if budgeted:
         _drivers(prs, gl, materiality, period, budgeted)
     if detail is not None and {"department", "entity"} <= set(detail.columns):
@@ -574,10 +694,29 @@ def build_pptx_pack(gl: pd.DataFrame,
 
 
 if __name__ == "__main__":  # pragma: no cover - manual run
-    from ..synthetic_data import generate_month, monthly_detail
+    from .. import ingest
+    from ..synthetic_data import (DEFAULT_PERIOD, generate_budget_year,
+                                  generate_month, generate_ytd_transactions,
+                                  monthly_detail)
     root = Path(__file__).resolve().parents[3]
-    period = "2025-06"
+    period = DEFAULT_PERIOD
+
+    # Roll the demo ledger and plan up to the reporting month.
+    cut = ingest.period_key(period)
+    txn = generate_ytd_transactions(period)
+    bud = generate_budget_year()
+    a = (txn[txn.period_no <= cut]
+         .groupby(["account_code", "account_name", "category"], as_index=False)
+         ["amount_eur"].sum().rename(columns={"amount_eur": "actual"}))
+    b = (bud[bud.period_no <= cut]
+         .groupby(["account_code", "account_name", "category"], as_index=False)
+         [["budget_eur", "prior_eur"]].sum()
+         .rename(columns={"budget_eur": "budget", "prior_eur": "prior_year"}))
+    ytd_frame = a.merge(b, on=["account_code", "account_name", "category"],
+                        how="outer").fillna(0.0)
+
     out = build_pptx_pack(generate_month(period).drop(columns="period"), period,
                           root / "output" / "flux_management_pack.pptx",
-                          detail=monthly_detail(period))
+                          detail=monthly_detail(period), ytd=ytd_frame,
+                          months=txn[txn.period_no <= cut]["period"].nunique())
     print(f"Written: {out}")

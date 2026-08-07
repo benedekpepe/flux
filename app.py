@@ -26,7 +26,8 @@ from flux.ingest import (match_columns, _content_detect, apply_mapping,
                          CANONICAL, REQUIRED)
 from flux.engine import build_report, has_budget
 from flux.reporting import build_client_pack, build_demo_pack, build_pptx_pack
-from flux.synthetic_data import generate_month, monthly_detail
+from flux.synthetic_data import (generate_budget_year, generate_month,
+                                 generate_ytd_transactions, monthly_detail)
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -66,6 +67,27 @@ st.sidebar.caption(
     "Upload your own GL/trial balance, or use the built-in sample company "
     "(multi-entity, multi-currency) to see the full pack."
 )
+
+
+@st.cache_data(show_spinner=False)
+def _sample_ytd() -> pd.DataFrame:
+    """The demo ledger and plan rolled up to the reporting month.
+
+    Cached: it is the same frame on every click, and rolling five thousand
+    postings up again would add a second to a button the user is watching.
+    """
+    cut = ingest.period_key(SAMPLE_PERIOD)
+    txn = generate_ytd_transactions(SAMPLE_PERIOD)
+    bud = generate_budget_year()
+    actual = (txn[txn.period_no <= cut]
+              .groupby(["account_code", "account_name", "category"], as_index=False)
+              ["amount_eur"].sum().rename(columns={"amount_eur": "actual"}))
+    plan = (bud[bud.period_no <= cut]
+            .groupby(["account_code", "account_name", "category"], as_index=False)
+            [["budget_eur", "prior_eur"]].sum()
+            .rename(columns={"budget_eur": "budget", "prior_eur": "prior_year"}))
+    return actual.merge(plan, on=["account_code", "account_name", "category"],
+                        how="outer").fillna(0.0)
 
 
 def _pnl_preview(std: pd.DataFrame, budgeted: bool = True):
@@ -295,9 +317,12 @@ with tab_upload:
                            Path(tempfile.gettempdir()) / "flux_pack.xlsx")
             if gen_p.button("Generate PowerPoint deck", width="stretch"):
                 with gen_p:
+                    ytd_frame = ingest.year_to_date(std, active)
                     _build("Building the slides…", "Deck", "deck_upload",
-                           lambda o: build_pptx_pack(preview, active, o,
-                                                     budgeted=budgeted),
+                           lambda o: build_pptx_pack(
+                               preview, active, o, budgeted=budgeted,
+                               ytd=ytd_frame if not ytd_frame.empty else None,
+                               months=len(found) or None),
                            Path(tempfile.gettempdir()) / "flux_management_pack.pptx")
             with gen_x:
                 _render_download("pack_upload", "Download flux_pack.xlsx")
@@ -325,8 +350,10 @@ with tab_sample:
     if col_p.button("Generate PowerPoint deck", width="stretch"):
         with col_p:
             _build("Building the slides…", "Deck", "deck_sample",
-                   lambda o: build_pptx_pack(sample, SAMPLE_PERIOD, o,
-                                             detail=monthly_detail(SAMPLE_PERIOD)),
+                   lambda o: build_pptx_pack(
+                       sample, SAMPLE_PERIOD, o,
+                       detail=monthly_detail(SAMPLE_PERIOD),
+                       ytd=_sample_ytd(), months=int(SAMPLE_PERIOD[5:7])),
                    Path(tempfile.gettempdir()) / "flux_sample_deck.pptx")
     with col_x:
         _render_download("pack_sample", "Download flux_sample_pack.xlsx")

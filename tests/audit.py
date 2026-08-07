@@ -502,11 +502,26 @@ def test_workbooks() -> None:
     # --- the management deck ------------------------------------------------
     from pptx import Presentation
 
+    # The cumulative frame the year-to-date slide needs.
+    cut = ingest.period_key(PERIOD)
+    txns_ytd = generate_ytd_transactions(PERIOD)
+    bud_ytd = generate_budget_year()
+    ytd_actual = (txns_ytd[txns_ytd.period_no <= cut]
+                  .groupby(["account_code", "account_name", "category"], as_index=False)
+                  ["amount_eur"].sum().rename(columns={"amount_eur": "actual"}))
+    ytd_plan = (bud_ytd[bud_ytd.period_no <= cut]
+                .groupby(["account_code", "account_name", "category"], as_index=False)
+                [["budget_eur", "prior_eur"]].sum()
+                .rename(columns={"budget_eur": "budget", "prior_eur": "prior_year"}))
+    ytd_frame = ytd_actual.merge(ytd_plan,
+                                 on=["account_code", "account_name", "category"],
+                                 how="outer").fillna(0.0)
+
     deck = build_pptx_pack(agg, PERIOD, tmp / "deck.pptx",
-                           detail=monthly_detail(PERIOD))
+                           detail=monthly_detail(PERIOD), ytd=ytd_frame, months=6)
     prs = Presentation(deck)
-    check("Deck has all five slides with a budget", len(prs.slides._sldIdLst) == 5,
-          str(len(prs.slides._sldIdLst)))
+    check("Deck has all six slides with a budget and a year to date",
+          len(prs.slides._sldIdLst) == 6, str(len(prs.slides._sldIdLst)))
 
     words = []
     for slide in prs.slides:
@@ -521,7 +536,22 @@ def test_workbooks() -> None:
     check("Deck explains the materiality rule", "materiality" in joined.lower())
 
     charts = sum(1 for s in prs.slides for sh in s.shapes if sh.has_chart)
-    check("Deck carries native charts, not pictures of charts", charts == 2, str(charts))
+    check("Deck carries native charts, not pictures of charts", charts == 3, str(charts))
+    check("Year-to-date slide states the cumulative revenue",
+          f"{line(build_report(ytd_frame), 'Revenue').actual:,.0f}" in joined,
+          "cumulative revenue missing")
+    check("Year-to-date slide answers whether the month is typical",
+          "run rate" in joined.lower(), "run-rate read missing")
+
+    # A single-period file has no year to date; the slide must not appear.
+    no_ytd = build_pptx_pack(agg, PERIOD, tmp / "deck_single.pptx")
+    check("Deck drops the cumulative slide for a single-period file",
+          len(Presentation(no_ytd).slides._sldIdLst) == 4,
+          str(len(Presentation(no_ytd).slides._sldIdLst)))
+
+    empty_ytd = ingest.year_to_date(agg.assign(period=PERIOD), PERIOD)
+    check("A one-period frame yields no year to date rather than repeating itself",
+          empty_ytd.empty, str(len(empty_ytd)))
 
     tables = [sh.table for s in prs.slides for sh in s.shapes if sh.has_table]
     check("Deck has the P&L table", len(tables) == 1, str(len(tables)))
