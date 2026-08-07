@@ -39,7 +39,7 @@ from .styling import (
     CUR, CUR2, CUR_EUR, CUR2_EUR, PCT, RATE, KPI_DELTA, LCY_FORMATS,
     CENTER, LEFT, RIGHT, WRAP, indent, band_fill,
     GOLD_SIDE, HEADER_BOTTOM, SUBTOTAL_TOP, TOTAL_TOP,
-    hide_grid, title_band, headers, widths, outline, badge_cf, wrapped_height,
+    hide_grid, title_band, headers, widths, outline, badge_cf, wrapped_height, fit_text_columns,
     named_style,
     quiet_indicators, collect_quiet_ranges, suppress_error_indicators,
 )
@@ -200,6 +200,10 @@ def _write_source_sheet(ws, df, spec, title, meta, footnote) -> tuple[int, int]:
             cell.style = style_for(fmt, banded, str(row.get("currency", "EUR")))
         ws.row_dimensions[r].height = 14
     last = first + len(df) - 1
+
+    text_cols = [get_column_letter(i) for i, (_k, _h, _w, fmt) in enumerate(spec, start=1)
+                 if fmt not in numeric]
+    fit_text_columns(ws, text_cols, first, last)
 
     ws.cell(row=last + 2, column=1, value=footnote).font = F_NOTE
     quiet_indicators(ws, 5, last)
@@ -420,6 +424,7 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
                   "financing items. Bold rows are group subtotals.").font = F_NOTE
 
     widths(ws, [28, 13, 13, 12, 8, 13, 13, 12, 8, 14, 8, 11])
+    fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 5, last + 2)
     ws.freeze_panes = f"B{first}"
 
@@ -565,6 +570,7 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
                   "only. Revenue is excluded: this is a spend view.").font = F_NOTE
 
     widths(ws, [32, 15, 15, 15, 10, 6, 11, 2])
+    fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 5, last + 3)
     ws.freeze_panes = f"A{first}"
 
@@ -612,6 +618,7 @@ def _write_drivers(ws, agg, gl, glf, gll, bud, budf, budl, period) -> None:
         DataBarRule(start_type="min", end_type="max", color=BAR, showValue=True))
     badge_cf(ws, f"H{first}:H{last}", f"I{first}:I{last}")
     widths(ws, [12, 30, 12, 15, 15, 15, 10, 6, 11])
+    fit_text_columns(ws, ["B", "C"], first, last)
     quiet_indicators(ws, 5, last)
     ws.freeze_panes = f"A{first}"
 

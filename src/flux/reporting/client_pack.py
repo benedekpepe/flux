@@ -35,6 +35,7 @@ from .styling import (
     CENTER, LEFT, RIGHT, WRAP, indent, band_fill,
     GOLD_SIDE, SUBTOTAL_TOP, TOTAL_TOP,
     hide_grid, title_band, headers, widths, outline, badge_cf, note, wrapped_height,
+    fit_text_columns,
     quiet_indicators, collect_quiet_ranges, suppress_error_indicators,
 )
 from .formulas import (
@@ -560,6 +561,7 @@ def _departments(ws, hierarchy, gl, glf, gll, L, period, has_cc, var, perno=None
             value="Departments are roll-ups; cost centres are indented beneath them. "
                   "Revenue is excluded: this is a spend view.").font = F_NOTE
     widths(ws, [32, 15, 15, 15, 10, 6, 11, 2])
+    fit_text_columns(ws, ["A"], first, r)
     quiet_indicators(ws, 5, last + 3)
     ws.freeze_panes = f"A{first}"
 
@@ -615,6 +617,7 @@ def _drivers(ws, agg, gl, glf, gll, L, period, var, perno=None):
         DataBarRule(start_type="min", end_type="max", color=BAR, showValue=True))
     badge_cf(ws, f"H{first}:H{last}", f"I{first}:I{last}")
     widths(ws, [12, 30, 12, 15, 15, 15, 10, 6, 11])
+    fit_text_columns(ws, ["B", "C"], first, last)
     quiet_indicators(ws, 5, last)
     ws.freeze_panes = f"A{first}"
 

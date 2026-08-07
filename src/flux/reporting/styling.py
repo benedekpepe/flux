@@ -202,6 +202,28 @@ def widths(ws, values, start=1) -> None:
         ws.column_dimensions[get_column_letter(c)].width = w
 
 
+def fit_text_columns(ws, letters, first_row, last_row, *, pad=2.0,
+                     max_width=40.0) -> None:
+    """Widen text columns to the longest label they actually hold.
+
+    Excel clips a string at the cell edge whenever the neighbouring cell is
+    occupied, so a name column sized by guesswork silently truncates the longest
+    account names. Measuring the content is the only way to be right for a chart
+    of accounts nobody has seen yet; the cap stops one outlier stretching a
+    column across the sheet.
+    """
+    for letter in letters:
+        longest = 0
+        for row in range(first_row, last_row + 1):
+            value = ws[f"{letter}{row}"].value
+            if isinstance(value, str) and not value.startswith("="):
+                longest = max(longest, len(value))
+        if longest:
+            current = ws.column_dimensions[letter].width or 8.43
+            ws.column_dimensions[letter].width = min(
+                max_width, max(current, longest + pad))
+
+
 def outline(ws, r1, c1, r2, c2, side=GOLD_SIDE) -> None:
     """Draw a border around a rectangular range without clearing inner edges."""
     for r in range(r1, r2 + 1):
