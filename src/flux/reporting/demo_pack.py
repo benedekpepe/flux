@@ -184,7 +184,7 @@ def _write_gl_transactions(ws, txns, period) -> tuple[int, int]:
     return _write_source_sheet(
         ws, txns, GL_SPEC,
         "GL Transactions · year-to-date posting lines (multi-entity, multi-currency)",
-        f"YTD through {period}  ·  reporting currency \u20ac",
+        f"Year to date through {period}  ·  reporting currency \u20ac",
         "Blue cells are input amounts. Amount (EUR) = Amount (LCY) x FX. "
         "Revenue is credited (H), costs are debited (S). Only account, category, "
         "cost centre, period and the EUR amount drive the reports; the remaining "
@@ -206,7 +206,7 @@ def _write_budget(ws, bud, period) -> tuple[int, int]:
 # ===========================================================================
 def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report) -> None:
     hide_grid(ws)
-    title_band(ws, "Management P&L · Variance Report (consolidated)", f"Period {period}  ·  \u20ac", "K")
+    title_band(ws, "Management P&L · Variance Report (consolidated)", f"Reporting month {period}  ·  \u20ac", "K")
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
     bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
 
@@ -293,8 +293,10 @@ def _write_pnl(ws, gl, glf, gll, bud, budf, budl, period, comments, report) -> N
 # ===========================================================================
 def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
     hide_grid(ws)
+    # The fiscal year comes from the period, not a constant: hardcoded, this
+    # header still read "FY 2025" for a 2026 close.
     title_band(ws, "Expense Report · by expense type",
-                f"Period {period}  ·  YTD & FY 2025  ·  \u20ac", "L")
+                f"Reporting month {period}  ·  YTD & FY {period[:4]}  ·  \u20ac", "L")
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
     bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
     perno = int(period[:4]) * 100 + int(period[5:7])
@@ -400,7 +402,7 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
 # ===========================================================================
 def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None:
     hide_grid(ws)
-    title_band(ws, "By Entity · net income by legal entity", f"Period {period}  ·  \u20ac", "H")
+    title_band(ws, "By Entity · net income by legal entity", f"Reporting month {period}  ·  \u20ac", "H")
     headers(ws, 5, ["Entity", "Revenue", "Spend", "Net income", "Budget net",
                      "Var (Bud)", "Var %", "F/U"], center_from=2, center_to=8)
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
@@ -451,7 +453,7 @@ def _write_by_entity(ws, ent_var, gl, glf, gll, bud, budf, budl, period) -> None
 def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> None:
     """Departmental spend variance with each department's cost centres nested."""
     hide_grid(ws)
-    title_band(ws, "Departments & Cost Centres · spend variance", f"Period {period}  ·  \u20ac", "H")
+    title_band(ws, "Departments & Cost Centres · spend variance", f"Reporting month {period}  ·  \u20ac", "H")
     headers(ws, 5, ["Department / Cost Centre", "Actual", "Budget", "Var (Bud)", "Var %",
                      "F/U", "Flag", ""], center_from=2, center_to=7)
 
@@ -545,7 +547,7 @@ def _write_cost_centres(ws, dept_var, gl, glf, gll, bud, budf, budl, period) -> 
 # ===========================================================================
 def _write_drivers(ws, agg, gl, glf, gll, bud, budf, budl, period) -> None:
     hide_grid(ws)
-    title_band(ws, "Variance Drivers · account level", f"Period {period}  ·  \u20ac", "I")
+    title_band(ws, "Variance Drivers · account level", f"Reporting month {period}  ·  \u20ac", "I")
     headers(ws, 5, ["Account", "Name", "Category", "Actual", "Budget", "Var (Bud)", "Var %", "F/U", "Flag"],
              center_from=4, center_to=9)
     gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"

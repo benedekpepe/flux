@@ -181,7 +181,7 @@ def _cover(prs, entity, period, ni, budgeted):
     _text(s, MARGIN, Inches(3.75), Inches(8.0), Inches(0.5),
           [(entity, 30, True, WHITE)])
     _text(s, MARGIN, Inches(4.35), Inches(8.0), Inches(0.4),
-          [(f"Period {period}  ·  reporting currency EUR", 15, False, MUTE)])
+          [(f"Reporting month {period}  ·  currency EUR", 15, False, MUTE)])
 
     # The headline number belongs on the cover: it is what the reader opened for.
     card = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
@@ -222,7 +222,7 @@ def _kpi_card(s, x, y, w, label, value, delta, favourable, budgeted):
 
 def _result(prs, report, gl, period, budgeted):
     s = _blank(prs)
-    _slide_header(s, "The result", "Where the month landed", f"Period {period}")
+    _slide_header(s, "The result", "Where the month landed", f"Reporting month {period}")
 
     def line(label):
         return report[report.line == label].iloc[0]
@@ -261,7 +261,7 @@ def _result(prs, report, gl, period, budgeted):
 # ---------------------------------------------------------------------------
 def _pnl_table(prs, report, comments, period, budgeted):
     s = _blank(prs)
-    _slide_header(s, "Profit and loss", "The management P&L", f"Period {period}  ·  EUR")
+    _slide_header(s, "Profit and loss", "The management P&L", f"Reporting month {period}  ·  EUR")
 
     heads = (["Line", "Actual", "Budget", "Variance", "Var %", "F/U", ""]
              if budgeted else ["Line", "Actual", "Prior year", "Var (PY)", "", "", ""])
@@ -338,7 +338,7 @@ def _pnl_table(prs, report, comments, period, budgeted):
 # ---------------------------------------------------------------------------
 def _drivers(prs, gl, materiality, period, budgeted):
     s = _blank(prs)
-    _slide_header(s, "Drivers", "What moved the result", f"Period {period}  ·  EUR")
+    _slide_header(s, "Drivers", "What moved the result", f"Reporting month {period}  ·  EUR")
 
     leaves = leaf_variances(gl, materiality)
     material = leaves[leaves["material"]].copy()
@@ -431,7 +431,7 @@ def _drivers(prs, gl, materiality, period, budgeted):
 # ---------------------------------------------------------------------------
 def _spend(prs, detail, period, materiality):
     s = _blank(prs)
-    _slide_header(s, "Spend", "Where the money went", f"Period {period}  ·  EUR")
+    _slide_header(s, "Spend", "Where the money went", f"Reporting month {period}  ·  EUR")
 
     dept = department_variances(detail, materiality).sort_values("actual", ascending=False)
     plot = dept.iloc[::-1]

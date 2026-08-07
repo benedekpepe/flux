@@ -75,7 +75,7 @@ def _gl_input(ws, agg, period, dims, budgeted=True):
     money = {"actual", "budget", "prior_year"}
     ints = {"period_no"}
 
-    title_band(ws, "GL Input · account level", f"Period {period}  ·  \u20ac",
+    title_band(ws, "GL Input · account level", f"Reporting month {period}  ·  \u20ac",
                    get_column_letter(len(spec)))
     headers(ws, 5, [l for _k, l, _w in spec],
                 center_from=len(spec) - 2, center_to=len(spec))
@@ -112,8 +112,8 @@ def _gl_input(ws, agg, period, dims, budgeted=True):
 # ---------------------------------------------------------------------------
 def _pnl(ws, gl, glf, gll, L, period, comments, report, var, perno=None, ytd=False):
     hide_grid(ws)
-    meta = (f"Period {period} · year to date  ·  \u20ac" if ytd
-            else f"Period {period}  ·  \u20ac")
+    meta = (f"Reporting month {period}  ·  with year to date  ·  \u20ac" if ytd
+            else f"Reporting month {period}  ·  \u20ac")
     title_band(ws, "Management P&L · Variance Report", meta, "L" if ytd else "K")
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
     cat, act, bud, pri = R(L["category"]), R(L["actual"]), R(L["budget"]), R(L["prior_year"])
@@ -249,7 +249,8 @@ def _dimension_sheet(ws, values, gl, glf, gll, L, period, title, first_header,
                      dim_key, var, spend_only=False, revenue_split=False,
                      perno=None, ytd=False):
     hide_grid(ws)
-    meta = (f"Period {period} · year to date  ·  \u20ac" if ytd else f"Period {period}  ·  \u20ac")
+    meta = (f"Reporting month {period}  ·  with year to date  ·  \u20ac" if ytd
+            else f"Reporting month {period}  ·  \u20ac")
     title_band(ws, title, meta, "K" if ytd else "H")
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
     dim, cat = R(L[dim_key]), R(L["category"])
@@ -383,7 +384,8 @@ def _group_expense_types(values: list[str]) -> list[tuple[str, list[str]]]:
 def _expense_sheet(ws, groups, gl, glf, gll, L, period, var, perno=None, ytd=False):
     """Expense report by type, grouped with subtotals, month and optional YTD."""
     hide_grid(ws)
-    meta = (f"Period {period} · year to date  ·  \u20ac" if ytd else f"Period {period}  ·  \u20ac")
+    meta = (f"Reporting month {period}  ·  with year to date  ·  \u20ac" if ytd
+            else f"Reporting month {period}  ·  \u20ac")
     title_band(ws, "Expense Report · by expense type", meta, "K" if ytd else "G")
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
     dim, cat = R(L["expense_type"]), R(L["category"])
@@ -486,7 +488,7 @@ def _expense_sheet(ws, groups, gl, glf, gll, L, period, var, perno=None, ytd=Fal
 def _departments(ws, hierarchy, gl, glf, gll, L, period, has_cc, var, perno=None):
     hide_grid(ws)
     title_band(ws, "Departments & Cost Centres · spend variance",
-                   f"Period {period}  ·  \u20ac", "H")
+                   f"Reporting month {period}  ·  \u20ac", "H")
     headers(ws, 5, ["Department / Cost centre", "Actual", "Budget", "Var (Bud)",
                         "Var %", "F/U", "Flag", ""], center_from=2, center_to=7)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"
@@ -567,7 +569,7 @@ def _departments(ws, hierarchy, gl, glf, gll, L, period, has_cc, var, perno=None
 # ---------------------------------------------------------------------------
 def _drivers(ws, agg, gl, glf, gll, L, period, var, perno=None):
     hide_grid(ws)
-    title_band(ws, "Variance Drivers · account level", f"Period {period}  ·  \u20ac", "I")
+    title_band(ws, "Variance Drivers · account level", f"Reporting month {period}  ·  \u20ac", "I")
     headers(ws, 5, ["Account", "Account name", "Category", "Actual", "Budget",
                         "Var (Bud)", "Var %", "F/U", "Flag"], center_from=4, center_to=9)
     R = lambda c: f"'{gl}'!${c}${glf}:${c}${gll}"

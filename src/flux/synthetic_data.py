@@ -29,7 +29,12 @@ ENTITIES = [
     {"name": "Flux Kft.", "country": "HU", "region": "EMEA", "currency": "HUF", "fx": 0.00256, "weight": 0.20},
 ]
 
-MONTHS = [f"2025-{m:02d}" for m in range(1, 13)]
+# The demo company's fiscal year. One constant so the sample can be moved
+# forward without hunting through defaults, and so nothing hardcodes 2025.
+BASE_YEAR = 2025
+DEFAULT_PERIOD = f"{BASE_YEAR}-06"
+
+MONTHS = [f"{BASE_YEAR}-{m:02d}" for m in range(1, 13)]
 
 BUDGET_BASELINE: dict[str, float] = {
     "4000": 355_000, "4010": 74_000, "4100": 505_000, "4110": 400_000,
@@ -91,7 +96,7 @@ def _combos():
                     yield ent, acc, dept, cc_code, cc_name, ent["weight"], weight
 
 
-def generate_budget(period="2025-06", seed=42):
+def generate_budget(period=DEFAULT_PERIOD, seed=42):
     rng = np.random.default_rng(seed + 1 + MONTHS.index(period))
     m = MONTHS.index(period)
     rows = []
@@ -102,7 +107,7 @@ def generate_budget(period="2025-06", seed=42):
         prior = budget * py_factor * (1 + rng.normal(0, 0.04))
         rows.append({
             "period": period, "period_no": int(period[:4]) * 100 + int(period[5:7]),
-            "version": "BUD-2025-V2", "entity": ent["name"],
+            "version": f"BUD-{BASE_YEAR}-V2", "entity": ent["name"],
             "region": ent["region"], "currency": ent["currency"],
             "department": dept, "cost_centre": cc_code,
             "owner": BUDGET_OWNERS.get(dept, "Finance"),
@@ -154,7 +159,7 @@ def _line_text(acc, source, partner, period):
     return f"{partner} - {acc.name}"
 
 
-def generate_transactions(period="2025-06", seed=42):
+def generate_transactions(period=DEFAULT_PERIOD, seed=42):
     """Transaction-level actuals as a realistic ERP general-ledger extract.
 
     Each row is one posting line, carrying the document header fields (number,
@@ -246,7 +251,7 @@ def generate_transactions(period="2025-06", seed=42):
                            "account_code"]).reset_index(drop=True)
 
 
-def generate_ytd_transactions(period="2025-06", seed=42):
+def generate_ytd_transactions(period=DEFAULT_PERIOD, seed=42):
     idx = MONTHS.index(period)
     parts = [generate_transactions(MONTHS[i], seed) for i in range(idx + 1)]
     df = pd.concat(parts, ignore_index=True)
@@ -254,7 +259,7 @@ def generate_ytd_transactions(period="2025-06", seed=42):
                            "account_code"]).reset_index(drop=True)
 
 
-def monthly_detail(period="2025-06", seed=42):
+def monthly_detail(period=DEFAULT_PERIOD, seed=42):
     txns = generate_transactions(period, seed)
     bud = generate_budget(period, seed)
     act = (txns.groupby(["entity", "region", "department", "cost_centre", "account_code",
@@ -266,7 +271,7 @@ def monthly_detail(period="2025-06", seed=42):
     return merged.rename(columns={"budget_eur": "budget", "prior_eur": "prior_year"})
 
 
-def generate_month(period="2025-06", seed=42):
+def generate_month(period=DEFAULT_PERIOD, seed=42):
     detail = monthly_detail(period, seed)
     agg = (detail.groupby(["account_code", "account_name", "category"], as_index=False)
            [["actual", "budget", "prior_year"]].sum())
@@ -282,7 +287,8 @@ if __name__ == "__main__":
     by = generate_budget_year()
     print(f"YTD transactions (Jan-Jun): {len(ytd)} rows, {len(ytd.columns)} cols")
     print(f"Full-year budget: {len(by)} rows")
-    print(f"June actual (EUR): {ytd[ytd.period=='2025-06']['amount_eur'].sum():,.0f}")
+    print(f"Month actual (EUR): "
+          f"{ytd[ytd.period == DEFAULT_PERIOD]['amount_eur'].sum():,.0f}")
     print(f"YTD actual  (EUR): {ytd['amount_eur'].sum():,.0f}")
     print(f"FY budget   (EUR): {by['budget_eur'].sum():,.0f}")
     print("Expense types present:", sorted(ytd['expense_type'].unique()) != [])
