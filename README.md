@@ -48,7 +48,7 @@ automates.
 
 ## Screenshots
 
-**Management P&L — KPI cards, variances, materiality flags and commentary**
+**Management P&L — month and year to date, with materiality flags and commentary**
 
 ![Management P&L with variances, F/U badges and per-line commentary](docs/pnl-report.png)
 
@@ -64,9 +64,9 @@ automates.
 
 ![Department spend variance with cost centres nested beneath each department](docs/departments.png)
 
-**YTD & Outlook — the year so far, and where it lands on two stated assumptions**
+**Outlook — where the year lands on two stated assumptions**
 
-![Year-to-date P&L with run-rate and plan-for-the-rest full-year projections](docs/ytd-outlook.png)
+![Full-year projections by run rate and by plan for the rest, against the annual budget](docs/outlook.png)
 
 **PowerPoint deck — the same numbers as seven slides, for sending upward**
 
@@ -122,7 +122,7 @@ The pack projects the full year two ways, because neither alone is honest:
 
 The outcome usually sits between them, and the gap between the two is itself the
 message: it is the size of what the remaining months have to make up. Months
-elapsed is an editable cell on the workbook's *YTD & Outlook* sheet, so the
+elapsed is an editable cell on the workbook's *Outlook* sheet, so the
 projection recalculates for a different close without rebuilding the pack.
 
 Neither is a forecast. There is no seasonality, no pipeline and no assumed
@@ -172,7 +172,7 @@ a fiscal year must not be read as an amount, so Flux asks rather than assumes.
 | Sheet | Needs |
 | --- | --- |
 | P&L Report, Drivers, GL Input | always |
-| YTD & Outlook | more than one period |
+| Outlook | more than one period |
 | Expense Report | an expense-type column |
 | Departments & Cost Centres | a department column (cost centre nests under it) |
 | By Entity | more than one entity |

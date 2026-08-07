@@ -505,7 +505,7 @@ def test_workbooks() -> None:
 
     demo = build_demo_pack(PERIOD, tmp / "demo.xlsx")
     wb = _load(demo)
-    expected = ["P&L Report", "YTD & Outlook", "Expense Report", "By Entity",
+    expected = ["P&L Report", "Outlook", "Expense Report", "By Entity",
                 "Departments & CCs", "Drivers", "Budget", "GL Transactions"]
     check("Demo pack has every sheet in reading order",
           wb.sheetnames == expected, str(wb.sheetnames))
