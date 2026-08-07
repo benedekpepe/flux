@@ -1,0 +1,595 @@
+"""
+End-to-end verification.
+
+Run:  python tests/audit.py
+
+Checks, in the order a reviewer would ask about them:
+
+    1  P&L arithmetic and the roll-up to computed subtotals
+    2  favourable / unfavourable logic per account type
+    3  materiality: the two-condition rule and the not-meaningful escape
+    4  number parsing, including the accounting sign conventions
+    5  period parsing and reporting-period derivation
+    6  column mapping, including the guard that stops a document number
+       being read as an amount
+    7  aggregation, the budget join and its proportional allocation
+    8  sign normalisation of a credit-balance ledger
+    9  expense grouping, including unknown client-specific types
+   10  cross-view reconciliation: P&L, entity, department and expense views
+       all tie to the same source
+   11  both generated workbooks: structure, and the actuals-only contract
+   12  edge cases and the app module
+
+Exits non-zero on any failure.
+"""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+import traceback
+from pathlib import Path
+
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from flux import ingest
+from flux.coa import CHART_OF_ACCOUNTS, EXPENSE_GROUPS, PNL_STRUCTURE
+from flux.commentary import generate_commentary, line_comments
+from flux.engine import (MaterialityRule, build_report, cost_centre_variances,
+                         department_variances, entity_variances, has_budget,
+                         leaf_variances)
+from flux.reporting import build_client_pack, build_demo_pack
+from flux.reporting.client_pack import _group_expense_types
+from flux.synthetic_data import (generate_budget_year, generate_month,
+                                 generate_ytd_transactions, monthly_detail)
+
+TOL = 0.01
+PERIOD = "2025-06"
+
+_results: list[tuple[str, str, str]] = []
+
+
+def check(name: str, condition, detail: str = "") -> None:
+    _results.append(("PASS" if condition else "FAIL", name, detail))
+
+
+def close(a, b, tol=TOL) -> bool:
+    return abs(float(a) - float(b)) <= tol
+
+
+def line(report: pd.DataFrame, label: str):
+    return report[report["line"] == label].iloc[0]
+
+
+# ---------------------------------------------------------------------------
+# 1-3  Engine
+# ---------------------------------------------------------------------------
+def test_engine() -> None:
+    gl = generate_month(PERIOD)
+    rep = build_report(gl)
+
+    rev, cogs, gp = line(rep, "Revenue"), line(rep, "Cost of goods sold"), line(rep, "Gross profit")
+    opex, ebit = line(rep, "Operating expenses"), line(rep, "Operating income (EBIT)")
+    other, ni = line(rep, "Other expenses"), line(rep, "Net income")
+
+    check("Gross profit = Revenue - COGS",
+          close(gp.actual, rev.actual - cogs.actual))
+    check("EBIT = Gross profit - OpEx",
+          close(ebit.actual, gp.actual - opex.actual))
+    check("Net income = EBIT - Other",
+          close(ni.actual, ebit.actual - other.actual))
+    check("Budget subtotals roll up the same way",
+          close(gp.budget, rev.budget - cogs.budget)
+          and close(ni.budget, ebit.budget - other.budget))
+    check("Every P&L line is reported",
+          len(rep) == len(PNL_STRUCTURE))
+    check("Variance = actual - budget on every line",
+          all(close(r.var_bud, r.actual - r.budget) for r in rep.itertuples()))
+
+    # F/U respects account type: revenue up is good, cost up is bad.
+    up = pd.DataFrame([
+        {"account_code": "4000", "account_name": "Rev", "category": "Revenue",
+         "actual": 120_000.0, "budget": 100_000.0, "prior_year": 0.0},
+        {"account_code": "6110", "account_name": "Ads", "category": "OpEx",
+         "actual": 120_000.0, "budget": 100_000.0, "prior_year": 0.0},
+    ])
+    r_up = build_report(up)
+    check("Revenue above budget is favourable",
+          line(r_up, "Revenue").fav_unfav == "F")
+    check("OpEx above budget is unfavourable",
+          line(r_up, "Operating expenses").fav_unfav == "U")
+    check("Profit subtotal above budget is favourable",
+          line(r_up, "Net income").fav_unfav == "F")
+
+    # Materiality needs BOTH floors.
+    rule = MaterialityRule(abs_threshold=25_000, pct_threshold=0.10)
+    big_small_pct = pd.DataFrame([{"account_code": "6110", "account_name": "Ads",
+                                   "category": "OpEx", "actual": 1_030_000.0,
+                                   "budget": 1_000_000.0, "prior_year": 0.0}])
+    check("Large EUR but small % is not material",
+          not line(build_report(big_small_pct, rule), "Operating expenses").material)
+
+    small_big_pct = pd.DataFrame([{"account_code": "6110", "account_name": "Ads",
+                                   "category": "OpEx", "actual": 9_000.0,
+                                   "budget": 3_000.0, "prior_year": 0.0}])
+    check("Large % but small EUR is not material",
+          not line(build_report(small_big_pct, rule), "Operating expenses").material)
+
+    both = pd.DataFrame([{"account_code": "6110", "account_name": "Ads",
+                          "category": "OpEx", "actual": 130_000.0,
+                          "budget": 100_000.0, "prior_year": 0.0}])
+    check("Clearing both floors is material",
+          line(build_report(both, rule), "Operating expenses").material)
+
+    # Not meaningful: a near-zero base gives no usable percentage.
+    nm = pd.DataFrame([{"account_code": "6110", "account_name": "Ads",
+                        "category": "OpEx", "actual": 150_000.0,
+                        "budget": 7.0, "prior_year": 0.0}])
+    nm_line = line(build_report(nm, rule), "Operating expenses")
+    check("Near-zero base gives no percentage", nm_line.var_bud_pct is None)
+    check("Not-meaningful line is still judged on the amount", nm_line.material)
+
+    small_base = pd.DataFrame([{"account_code": "6110", "account_name": "Ads",
+                                "category": "OpEx", "actual": 60_000.0,
+                                "budget": 23_000.0, "prior_year": 0.0}])
+    check("A small but real base still gets a percentage",
+          line(build_report(small_base, rule), "Operating expenses").var_bud_pct is not None)
+
+    # Spend views use the same materiality rule as the P&L.
+    detail = monthly_detail(PERIOD)
+    dept = department_variances(detail)
+    check("Department view excludes revenue",
+          close(dept["actual"].sum(),
+                detail.loc[detail.category != "Revenue", "actual"].sum()))
+    check("Department variance = actual - budget",
+          all(close(r.var_bud, r.actual - r.budget) for r in dept.itertuples()))
+
+
+# ---------------------------------------------------------------------------
+# 4-5  Parsing
+# ---------------------------------------------------------------------------
+def test_parsing() -> None:
+    cases = {
+        "512.000,00": 512_000.0,        # EU thousands + decimal comma
+        "1,234,567.89": 1_234_567.89,   # US thousands
+        "445.000": 445_000.0,           # EU thousands, no decimals
+        "12,5": 12.5,                   # decimal comma
+        "\u20ac 1.234,50": 1234.5,      # currency symbol
+        "1.234,50 EUR": 1234.5,         # currency code
+        "-45 678,90": -45_678.9,        # space as thousands separator
+        "(2.500,00)": -2500.0,          # accounting parentheses
+        "1.234,50-": -1234.5,           # SAP trailing minus
+        "1,234.50 CR": -1234.5,         # credit marker
+        "1,234.50 DR": 1234.5,          # debit marker
+        "\u22121.000,00": -1000.0,      # unicode minus
+        "1\u00a0234,50": 1234.5,        # non-breaking space
+        "0,00": 0.0,
+    }
+    for raw, want in cases.items():
+        got = ingest._coerce_amount(raw)
+        check(f"parse {raw!r} -> {want}", close(got, want), f"got {got}")
+
+    for blank in ("", "n/a", "-", None):
+        check(f"blank {blank!r} parses as NaN", pd.isna(ingest._coerce_amount(blank)))
+
+    periods = {"2025-06": 202506, "2025/06": 202506, "202506": 202506,
+               "06.2025": 202506, "2025-06-30": 202506,
+               "June": None, "2025": None, "": None, None: None}
+    for raw, want in periods.items():
+        check(f"period {raw!r} -> {want}", ingest.period_key(raw) == want)
+
+    # The reporting month is the latest period that carries actuals: a full-year
+    # budget must not drag it into the future.
+    std = pd.DataFrame({
+        "account_code": ["4000"] * 4,
+        "account_name": ["Rev"] * 4,
+        "category": ["Revenue"] * 4,
+        "period": ["2025-05", "2025-06", "2025-07", "2025-08"],
+        "actual": [100.0, 120.0, 0.0, 0.0],
+        "budget": [100.0, 100.0, 100.0, 100.0],
+        "prior_year": [0.0] * 4,
+    })
+    active, found = ingest.reporting_period(std)
+    check("Reporting month is the last month with postings", active == "2025-06", active)
+    check("All periods are still listed", found[-1] == "2025-08")
+    check("filter_period keeps one month",
+          len(ingest.filter_period(std, "2025-06")) == 1)
+
+
+# ---------------------------------------------------------------------------
+# 6-7  Ingestion
+# ---------------------------------------------------------------------------
+def test_ingestion() -> None:
+    messy = pd.DataFrame({
+        "GL Code": ["4100", "4000", "5000", "6110", "6300"],
+        "Description": ["Subscription rev", "Product rev", "Materials",
+                        "Digital ads", "G&A salaries"],
+        "Actual Amount (EUR)": ["512.000,00", "298.000,00", "168.000,00",
+                                "128.000,00", "88.000,00"],
+        "Plan": ["480.000,00", "340.000,00", "160.000,00", "90.000,00", "90.000,00"],
+        "Last Year": ["445.000", "331.000", "150.000", "82.000", "86.000"],
+        "Dept": ["Commercial", "Commercial", "Operations", "Marketing", "G&A"],
+    })
+    std, report, issues = ingest.ingest(messy)
+    mapped = {m.field: m.mapped_from for _, m in report.iterrows()}
+    check("Account code resolved from an odd header", mapped["account_code"] == "GL Code")
+    check("Actual resolved from an odd header", mapped["actual"] == "Actual Amount (EUR)")
+    check("Budget resolved from 'Plan'", mapped["budget"] == "Plan")
+    check("Department resolved from 'Dept'", mapped["department"] == "Dept")
+    check("Category inferred from the account-code range",
+          list(std["category"]) == ["Revenue", "Revenue", "COGS", "OpEx", "OpEx"])
+    check("A clean file raises no issues", not issues, str(issues))
+
+    # A document number must never be read as an amount.
+    docnum = pd.DataFrame({
+        "Account": ["4000", "5000", "6110", "6300", "6310", "6320"],
+        "Name": ["Rev", "Mat", "Ads", "Sal", "Rent", "Util"],
+        "Doc": [1900001, 1900002, 1900003, 1900004, 1900005, 1900006],
+        "FY": [2025] * 6,
+    })
+    matches = ingest.match_columns(list(docnum.columns))
+    ingest._content_detect(docnum, matches)
+    amount = next(m.source for m in matches if m.field == "actual")
+    check("Sequential document numbers are not read as amounts", amount != "Doc", str(amount))
+    check("A fiscal-year column is not read as an amount", amount != "FY", str(amount))
+
+    # Hungarian headers resolve through the synonym dictionary.
+    hu = pd.DataFrame({
+        "Fokonyvi szam": ["4100", "6110"],
+        "Megnevezes": ["Arbevetel", "Hirdetes"],
+        "Teny": ["1.200.000", "300.000"],
+        "Terv": ["1.000.000", "250.000"],
+        "Koltseghely": ["CM10100", "MK30100"],
+    })
+    hm = ingest.match_columns(list(hu.columns))
+    hmap = {m.field: m.source for m in hm if m.source}
+    check("Hungarian headers map to the schema",
+          hmap.get("account_code") == "Fokonyvi szam"
+          and hmap.get("actual") == "Teny"
+          and hmap.get("budget") == "Terv"
+          and hmap.get("cost_centre") == "Koltseghely", str(hmap))
+
+    # Trial-balance shape: separate debit and credit columns.
+    tb = pd.DataFrame({
+        "Account": ["6110", "6300"],
+        "Account name": ["Ads", "Salaries"],
+        "Debit": ["130.000,00", "90.000,00"],
+        "Credit": ["30.000,00", "0,00"],
+    })
+    tm = ingest.match_columns(list(tb.columns))
+    tstd = ingest.apply_mapping(tb, tm)
+    check("Debit and credit columns net to the actual",
+          close(tstd["actual"].iloc[0], 100_000.0), str(list(tstd["actual"])))
+
+    # One amount column plus a debit/credit marker per line.
+    dc = pd.DataFrame({
+        "Account": ["4000", "6110"],
+        "Account name": ["Rev", "Ads"],
+        "Amount": ["500.000,00", "130.000,00"],
+        "D/C": ["H", "S"],
+    })
+    dm = ingest.match_columns(list(dc.columns))
+    dstd = ingest.apply_mapping(dc, dm)
+    check("A credit marker signs the amount negative",
+          close(dstd["actual"].iloc[0], -500_000.0) and close(dstd["actual"].iloc[1], 130_000.0),
+          str(list(dstd["actual"])))
+
+    # Aggregation keeps the analytical dimensions.
+    lines = pd.DataFrame({
+        "account_code": ["6110", "6110", "6110"],
+        "account_name": ["Ads"] * 3,
+        "category": ["OpEx"] * 3,
+        "department": ["Marketing", "Marketing", "Sales"],
+        "actual": [10.0, 20.0, 30.0],
+        "budget": [0.0, 0.0, 0.0],
+        "prior_year": [0.0, 0.0, 0.0],
+    })
+    agg = ingest.aggregate_to_accounts(lines)
+    check("Posting lines collapse per account and dimension", len(agg) == 2, str(len(agg)))
+    check("Aggregation preserves the total", close(agg["actual"].sum(), 60.0))
+
+    # A budget join across a coarser plan allocates rather than repeats.
+    actuals = pd.DataFrame({
+        "account_code": ["6110", "6110"],
+        "account_name": ["Ads", "Ads"],
+        "category": ["OpEx", "OpEx"],
+        "actual": [75.0, 25.0],
+        "budget": [0.0, 0.0],
+        "prior_year": [0.0, 0.0],
+    })
+    plan = pd.DataFrame({
+        "account_code": ["6110"],
+        "account_name": ["Ads"],
+        "category": ["OpEx"],
+        "actual": [0.0],
+        "budget": [200.0],
+        "prior_year": [0.0],
+    })
+    joined, _ = ingest.merge_budget(actuals, plan)
+    check("A coarser budget is allocated, not repeated",
+          close(joined["budget"].sum(), 200.0), str(joined["budget"].sum()))
+    check("Allocation follows the weight of actuals",
+          close(joined["budget"].max(), 150.0), str(joined["budget"].max()))
+
+
+# ---------------------------------------------------------------------------
+# 8  Sign normalisation
+# ---------------------------------------------------------------------------
+def test_sign_normalisation() -> None:
+    # A ledger credits revenue, so revenue arrives negative.
+    ledger = pd.DataFrame({
+        "account_code": ["4000", "4100", "5000", "6110"],
+        "account_name": ["Rev A", "Rev B", "Materials", "Ads"],
+        "category": ["Revenue", "Revenue", "COGS", "OpEx"],
+        "actual": [-500_000.0, -300_000.0, 160_000.0, 120_000.0],
+        "budget": [-480_000.0, -320_000.0, 150_000.0, 100_000.0],
+        "prior_year": [0.0, 0.0, 0.0, 0.0],
+    })
+    fixed, notes = ingest.normalise_signs(ledger)
+    rev = fixed.loc[fixed.category == "Revenue", "actual"].sum()
+    check("Credit-balance revenue is normalised to a positive magnitude",
+          close(rev, 800_000.0), str(rev))
+    check("Costs are left alone",
+          close(fixed.loc[fixed.category == "COGS", "actual"].sum(), 160_000.0))
+    check("The sign change is reported", any("normalised" in n for n in notes))
+
+    rep = build_report(fixed)
+    check("A normalised ledger produces positive revenue in the P&L",
+          line(rep, "Revenue").actual > 0)
+
+    # One credit note among positives is real data, not a convention.
+    mixed = pd.DataFrame({
+        "account_code": ["6110", "6120", "6130"],
+        "account_name": ["Ads", "Events", "PR"],
+        "category": ["OpEx"] * 3,
+        "actual": [100_000.0, 80_000.0, -250_000.0],
+        "budget": [0.0, 0.0, 0.0],
+        "prior_year": [0.0, 0.0, 0.0],
+    })
+    kept, kept_notes = ingest.normalise_signs(mixed)
+    check("A single credit inside a positive category is not flipped",
+          close(kept["actual"].sum(), -70_000.0), str(kept["actual"].sum()))
+    check("No sign note is raised for genuine mixed data", not kept_notes)
+
+
+# ---------------------------------------------------------------------------
+# 9  Expense grouping
+# ---------------------------------------------------------------------------
+def test_expense_grouping() -> None:
+    known = [t for _g, types in EXPENSE_GROUPS for t in types]
+    groups = _group_expense_types(known)
+    check("Every known expense type is grouped",
+          sorted(t for _n, ts in groups for t in ts) == sorted(known))
+    check("Personnel leads the expense report", groups[0][0] == "Personnel costs")
+
+    with_unknown = _group_expense_types(["Salaries & wages", "Céges mobilflotta"])
+    flat = [t for _n, ts in with_unknown for t in ts]
+    check("A client-specific expense type is still reported",
+          "Céges mobilflotta" in flat)
+    check("Unknown types are collected, not silently dropped",
+          with_unknown[-1][0] == "Other expense types")
+
+
+# ---------------------------------------------------------------------------
+# 10  Cross-view reconciliation
+# ---------------------------------------------------------------------------
+def test_reconciliation() -> None:
+    detail = monthly_detail(PERIOD)
+    agg = generate_month(PERIOD).drop(columns="period")
+    rep = build_report(agg)
+
+    ni = line(rep, "Net income").actual
+    rev = line(rep, "Revenue").actual
+
+    ent = entity_variances(detail)
+    check("Entity net income consolidates to the group P&L",
+          close(ent["net_actual"].sum(), ni), f"{ent['net_actual'].sum()} vs {ni}")
+    check("Entity revenue consolidates to group revenue",
+          close(ent["revenue"].sum(), rev))
+
+    spend = (line(rep, "Cost of goods sold").actual
+             + line(rep, "Operating expenses").actual
+             + line(rep, "Other expenses").actual)
+    dept = department_variances(detail)
+    check("Department spend ties to the P&L cost lines",
+          close(dept["actual"].sum(), spend), f"{dept['actual'].sum()} vs {spend}")
+
+    cc = cost_centre_variances(detail)
+    check("Cost centres sum to the same spend",
+          close(cc["actual"].sum(), spend))
+    check("Every cost centre carries its parent department",
+          "department" in cc.columns and cc["department"].notna().all())
+
+    by_type = (detail[detail.category != "Revenue"]
+               .groupby("expense_type", as_index=False)["actual"].sum())
+    check("The expense view ties to the same spend",
+          close(by_type["actual"].sum(), spend))
+
+    check("Revenue less spend is net income", close(rev - spend, ni))
+
+    leaves = leaf_variances(agg)
+    check("Account detail sums to the P&L actual",
+          close(leaves["actual"].sum(), rev + spend))
+
+    # Year-to-date actuals must reconcile to the transaction source.
+    txns = generate_ytd_transactions(PERIOD)
+    month_total = txns.loc[txns.period == PERIOD, "amount_eur"].sum()
+    check("The month's transactions tie to the P&L",
+          close(month_total, rev + spend, tol=1.0),
+          f"{month_total} vs {rev + spend}")
+
+
+# ---------------------------------------------------------------------------
+# 11  Workbooks
+# ---------------------------------------------------------------------------
+def _load(path: Path):
+    import warnings
+    from openpyxl import load_workbook
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return load_workbook(path)
+
+
+def test_workbooks() -> None:
+    tmp = Path(tempfile.mkdtemp())
+
+    demo = build_demo_pack(PERIOD, tmp / "demo.xlsx")
+    wb = _load(demo)
+    expected = ["P&L Report", "Expense Report", "By Entity", "Departments & CCs",
+                "Drivers", "Budget", "GL Transactions"]
+    check("Demo pack has every sheet in reading order",
+          wb.sheetnames == expected, str(wb.sheetnames))
+    check("Demo pack opens on the P&L",
+          wb.sheetnames[wb.active.index if hasattr(wb.active, "index") else 0] == "P&L Report"
+          or wb.active.title == "P&L Report", wb.active.title)
+    check("The P&L is formula-driven, not a value dump",
+          str(wb["P&L Report"]["B11"].value).startswith("="),
+          str(wb["P&L Report"]["B11"].value))
+    check("Materiality levers are present and editable",
+          wb["P&L Report"]["C9"].value == 25_000 and wb["P&L Report"]["G9"].value == 0.10)
+
+    # The sheet carries a footnote below the table, so count the contiguous
+    # data rows rather than trusting max_row.
+    gl_ws = wb["GL Transactions"]
+    gl_rows = 0
+    for (cell,) in gl_ws.iter_rows(min_row=6, max_col=1):
+        if cell.value in (None, ""):
+            break
+        gl_rows += 1
+    txns = generate_ytd_transactions(PERIOD)
+    check("Every transaction reaches the GL sheet",
+          gl_rows == len(txns), f"{gl_rows} vs {len(txns)}")
+
+    # Client pack, with a budget.
+    agg = generate_month(PERIOD).drop(columns="period")
+    withbud = build_client_pack(agg, PERIOD, tmp / "client.xlsx")
+    wbc = _load(withbud)
+    check("Client pack always has the core sheets",
+          {"P&L Report", "Drivers", "GL Input"} <= set(wbc.sheetnames), str(wbc.sheetnames))
+    check("Client P&L is formula-driven",
+          str(wbc["P&L Report"]["B11"].value).startswith("="))
+
+    # Client pack, actuals only: the variance columns must stay empty.
+    actuals = agg.copy()
+    actuals["budget"] = 0.0
+    check("An actuals-only frame is detected as unbudgeted", not has_budget(actuals))
+
+    nobud = build_client_pack(actuals, PERIOD, tmp / "actuals.xlsx")
+    wbn = _load(nobud)
+    pnl = wbn["P&L Report"]
+    check("Actuals are still reported without a budget",
+          str(pnl["B11"].value).startswith("="), str(pnl["B11"].value))
+    empty = all(pnl[f"{col}11"].value in (None, "") for col in ("C", "D", "E"))
+    check("Budget and variance cells are left empty, not zeroed", empty,
+          str([pnl[f"{c}11"].value for c in "CDE"]))
+    check("No F/U badge is claimed without a budget",
+          pnl["I11"].value in (None, ""), str(pnl["I11"].value))
+    check("Inert materiality levers are omitted",
+          pnl["C9"].value is None, str(pnl["C9"].value))
+
+    rep_nb = build_report(actuals)
+    check("The engine reports nothing material without a budget",
+          not rep_nb["material"].any())
+    text = generate_commentary(rep_nb, actuals)
+    check("Commentary says a budget is missing rather than inventing one",
+          "no budget" in text.lower(), text[:80])
+    comments = line_comments(rep_nb, actuals)
+    check("Per-line comments claim no variance without a budget",
+          all("no budget" in c.lower() for c in comments.values()))
+
+
+# ---------------------------------------------------------------------------
+# 12  Edge cases and the app
+# ---------------------------------------------------------------------------
+def test_edges() -> None:
+    single = pd.DataFrame([{"account_code": "4000", "account_name": "Rev",
+                            "category": "Revenue", "actual": 100.0,
+                            "budget": 100.0, "prior_year": 100.0}])
+    rep = build_report(single)
+    check("A single-line file still produces a full P&L", len(rep) == len(PNL_STRUCTURE))
+    check("A zero variance is favourable on revenue",
+          line(rep, "Revenue").fav_unfav == "F")
+
+    zero = single.copy(); zero["actual"] = 0.0; zero["budget"] = 0.0
+    rep0 = build_report(zero)
+    check("An all-zero file does not raise", len(rep0) == len(PNL_STRUCTURE))
+    check("An all-zero file flags nothing", not rep0["material"].any())
+
+    # An unknown category from a client file must not crash the engine.
+    odd = pd.DataFrame([{"account_code": "9000", "account_name": "Odd",
+                         "category": "Sonstiges", "actual": 100.0,
+                         "budget": 50.0, "prior_year": 0.0}])
+    try:
+        leaf_variances(odd)
+        check("An unknown category is handled, not fatal", True)
+    except Exception as exc:  # pragma: no cover - the point of the check
+        check("An unknown category is handled, not fatal", False, repr(exc))
+
+    check("The chart of accounts has no duplicate codes",
+          len({a.code for a in CHART_OF_ACCOUNTS}) == len(CHART_OF_ACCOUNTS))
+    check("Every account has a favourable direction",
+          all(a.favourable in ("higher", "lower") for a in CHART_OF_ACCOUNTS))
+
+    # The budget-year generator must cover twelve months.
+    by = generate_budget_year()
+    check("The budget covers a full year", by["period"].nunique() == 12)
+
+    app = Path(__file__).resolve().parents[1] / "app.py"
+    check("app.py exists", app.exists())
+    source = app.read_text(encoding="utf-8")
+    check("app.py parses", _parses(source))
+    check("app.py uses no browser-only Streamlit APIs",
+          "use_container_width" not in source)
+
+
+def _parses(source: str) -> bool:
+    import ast
+    try:
+        ast.parse(source)
+        return True
+    except SyntaxError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+def main() -> int:
+    suites = [
+        ("Engine", test_engine),
+        ("Parsing", test_parsing),
+        ("Ingestion", test_ingestion),
+        ("Sign normalisation", test_sign_normalisation),
+        ("Expense grouping", test_expense_grouping),
+        ("Reconciliation", test_reconciliation),
+        ("Workbooks", test_workbooks),
+        ("Edge cases", test_edges),
+    ]
+    crashed = []
+    for name, fn in suites:
+        start = len(_results)
+        try:
+            fn()
+        except Exception:
+            crashed.append(name)
+            _results.append(("FAIL", f"{name}: suite raised", traceback.format_exc(limit=3)))
+        ran = len(_results) - start
+        failed = sum(1 for s, _n, _d in _results[start:] if s == "FAIL")
+        status = "ok" if failed == 0 else f"{failed} FAILED"
+        print(f"  {name:<22} {ran:>3} checks   {status}")
+
+    failures = [(n, d) for s, n, d in _results if s == "FAIL"]
+    print("\n" + "-" * 72)
+    if failures:
+        print(f"FAILED  {len(failures)} of {len(_results)} checks\n")
+        for n, d in failures:
+            print(f"  - {n}")
+            if d:
+                print(f"      {d.strip().splitlines()[-1][:160]}")
+        return 1
+    print(f"PASSED  all {len(_results)} checks")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

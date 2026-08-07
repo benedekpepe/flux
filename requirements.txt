@@ -1,0 +1,11 @@
+# Runtime dependencies.
+# Streamlit is pinned to 1.49+: the app uses width="stretch", which replaced
+# use_container_width in that release and does not exist before it.
+pandas>=2.0
+numpy>=1.24
+openpyxl>=3.1
+streamlit>=1.49
+
+# Optional: enables LLM enrichment of the commentary and the ingestion
+# fallback. Both degrade gracefully to the template path without it.
+# anthropic>=0.40

@@ -1,0 +1,24 @@
+# No `base` is set on purpose: with it omitted, Streamlit follows the viewer's
+# system light/dark preference and picks the matching palette below. Both
+# palettes are drawn from the same brand colours the Excel packs use — navy,
+# brass and ivory — so the app and the workbook read as one product.
+
+[theme]
+font = "sans serif"
+
+[theme.light]
+primaryColor = "#1B2438"            # navy: buttons, the wordmark, focus states
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F1E8"  # ivory, as used for subtotal rows in the pack
+textColor = "#23272E"                 # ink
+
+[theme.dark]
+# Inverted rather than merely darkened: navy becomes the surface and brass the
+# accent, which is how the pack's masthead is already built.
+primaryColor = "#C6A15B"            # brass
+backgroundColor = "#131A29"         # deeper than the masthead so navy can sit on it
+secondaryBackgroundColor = "#1B2438"  # navy
+textColor = "#E8EAEE"
+
+[server]
+maxUploadSize = 50
