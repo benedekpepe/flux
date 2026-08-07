@@ -64,7 +64,11 @@ automates.
 
 ![Department spend variance with cost centres nested beneath each department](docs/departments.png)
 
-**PowerPoint deck — the same numbers as six slides, for sending upward**
+**YTD & Outlook — the year so far, and where it lands on two stated assumptions**
+
+![Year-to-date P&L with run-rate and plan-for-the-rest full-year projections](docs/ytd-outlook.png)
+
+**PowerPoint deck — the same numbers as seven slides, for sending upward**
 
 ![Four slides of the generated management deck: cover, result, P&L and year to date](docs/pptx-pack.png)
 
@@ -84,8 +88,8 @@ automates.
 5. **Excel pack** — the workbook is written with **live formulas over an input
    sheet**, so an edited input recalculates the whole pack. The sheets that get
    built depend on the dimensions present in the data.
-6. **Deck** — the same numbers as six slides: the result, the P&L, the year to
-   date, what moved it, and where the money went. Native PowerPoint charts and
+6. **Deck** — the same numbers as seven slides: the result, the P&L, the year to
+   date, where the year lands, what moved it, and where the money went. Native PowerPoint charts and
    tables, not images, so the recipient can edit them. The cumulative slide
    compares the month against the average month so far, which is the difference
    between a bad month and a trend; a single-period file drops that slide rather
@@ -106,6 +110,24 @@ Both floors must be cleared:
 
 The two thresholds are **editable lever cells** on the P&L sheet, and every other
 sheet points at them. Change one number and the whole pack re-flags.
+
+## Outlook
+
+The pack projects the full year two ways, because neither alone is honest:
+
+| Projection | Assumption |
+| --- | --- |
+| **Run rate** | the rest of the year behaves like the year so far — year to date ÷ months elapsed × 12 |
+| **Plan for the rest** | the remaining months hit budget — actual to date + the unspent part of the plan |
+
+The outcome usually sits between them, and the gap between the two is itself the
+message: it is the size of what the remaining months have to make up. Months
+elapsed is an editable cell on the workbook's *YTD & Outlook* sheet, so the
+projection recalculates for a different close without rebuilding the pack.
+
+Neither is a forecast. There is no seasonality, no pipeline and no assumed
+management action — they are arithmetic under a stated assumption, which is what
+makes them arguable rather than authoritative.
 
 ## Actuals with no budget
 
@@ -150,6 +172,7 @@ a fiscal year must not be read as an amount, so Flux asks rather than assumes.
 | Sheet | Needs |
 | --- | --- |
 | P&L Report, Drivers, GL Input | always |
+| YTD & Outlook | more than one period |
 | Expense Report | an expense-type column |
 | Departments & Cost Centres | a department column (cost centre nests under it) |
 | By Entity | more than one entity |
@@ -239,7 +262,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 120 checks` means everything is wired up correctly.
+`PASSED all 130 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -300,7 +323,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**120 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**130 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number
@@ -342,6 +365,7 @@ every green run leaves a downloadable workbook.
 - [x] Verification suite and CI.
 - [x] Public deploy (Streamlit Community Cloud).
 - [x] PowerPoint management pack (python-pptx).
+- [x] Year-to-date view and a run-rate outlook, in the workbook and the deck.
 - [ ] Period-over-period trend view, from the periods already in the file.
 
 ## License

@@ -90,6 +90,17 @@ def _sample_ytd() -> pd.DataFrame:
                         how="outer").fillna(0.0)
 
 
+@st.cache_data(show_spinner=False)
+def _sample_fy_budget() -> pd.DataFrame:
+    """The demo company's full-year plan, for the outlook slide."""
+    fy = (generate_budget_year()
+          .groupby(["account_code", "account_name", "category"], as_index=False)
+          [["budget_eur", "prior_eur"]].sum()
+          .rename(columns={"budget_eur": "budget", "prior_eur": "prior_year"}))
+    fy["actual"] = 0.0
+    return fy
+
+
 def _pnl_preview(std: pd.DataFrame, budgeted: bool = True):
     rep = build_report(std, budgeted=budgeted)
     ni = rep[rep.line == "Net income"].iloc[0]
@@ -353,7 +364,8 @@ with tab_sample:
                    lambda o: build_pptx_pack(
                        sample, SAMPLE_PERIOD, o,
                        detail=monthly_detail(SAMPLE_PERIOD),
-                       ytd=_sample_ytd(), months=int(SAMPLE_PERIOD[5:7])),
+                       ytd=_sample_ytd(), fy_budget=_sample_fy_budget(),
+                       months=int(SAMPLE_PERIOD[5:7])),
                    Path(tempfile.gettempdir()) / "flux_sample_deck.pptx")
     with col_x:
         _render_download("pack_sample", "Download flux_sample_pack.xlsx")

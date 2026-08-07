@@ -505,8 +505,8 @@ def test_workbooks() -> None:
 
     demo = build_demo_pack(PERIOD, tmp / "demo.xlsx")
     wb = _load(demo)
-    expected = ["P&L Report", "Expense Report", "By Entity", "Departments & CCs",
-                "Drivers", "Budget", "GL Transactions"]
+    expected = ["P&L Report", "YTD & Outlook", "Expense Report", "By Entity",
+                "Departments & CCs", "Drivers", "Budget", "GL Transactions"]
     check("Demo pack has every sheet in reading order",
           wb.sheetnames == expected, str(wb.sheetnames))
     check("Demo pack opens on the P&L",
@@ -592,11 +592,17 @@ def test_workbooks() -> None:
                                  on=["account_code", "account_name", "category"],
                                  how="outer").fillna(0.0)
 
+    fy_frame = (bud_ytd.groupby(["account_code", "account_name", "category"],
+                                as_index=False)[["budget_eur", "prior_eur"]].sum()
+                .rename(columns={"budget_eur": "budget", "prior_eur": "prior_year"}))
+    fy_frame["actual"] = 0.0
+
     deck = build_pptx_pack(agg, PERIOD, tmp / "deck.pptx",
-                           detail=monthly_detail(PERIOD), ytd=ytd_frame, months=6)
+                           detail=monthly_detail(PERIOD), ytd=ytd_frame,
+                           fy_budget=fy_frame, months=6)
     prs = Presentation(deck)
-    check("Deck has all six slides with a budget and a year to date",
-          len(prs.slides._sldIdLst) == 6, str(len(prs.slides._sldIdLst)))
+    check("Deck has all seven slides with a budget, a year to date and a plan",
+          len(prs.slides._sldIdLst) == 7, str(len(prs.slides._sldIdLst)))
 
     words = []
     for slide in prs.slides:
@@ -611,12 +617,38 @@ def test_workbooks() -> None:
     check("Deck explains the materiality rule", "materiality" in joined.lower())
 
     charts = sum(1 for s in prs.slides for sh in s.shapes if sh.has_chart)
-    check("Deck carries native charts, not pictures of charts", charts == 3, str(charts))
+    check("Deck carries native charts, not pictures of charts", charts == 4, str(charts))
     check("Year-to-date slide states the cumulative revenue",
           f"{line(build_report(ytd_frame), 'Revenue').actual:,.0f}" in joined,
           "cumulative revenue missing")
     check("Year-to-date slide answers whether the month is typical",
           "run rate" in joined.lower(), "run-rate read missing")
+
+    # The outlook must show both projections and name them, or a reader cannot
+    # tell which assumption produced which number.
+    check("Outlook slide states the run-rate projection",
+          "run rate" in joined.lower() and "plan for rest" in joined.lower(),
+          "one of the two projections is unnamed")
+    check("Outlook slide says the projections are arithmetic, not a forecast",
+          "not a forecast" in joined.lower())
+
+    ytd_rep = build_report(ytd_frame)
+    fy_rep = build_report(fy_frame)
+    ni_ytd = line(ytd_rep, "Net income").actual
+    ni_fy_bud = line(fy_rep, "Net income").budget
+    run_rate = ni_ytd / 6 * 12
+    plan_rest = ni_ytd + (ni_fy_bud - line(ytd_rep, "Net income").budget)
+    check("Run rate is the year to date carried over twelve months",
+          f"{run_rate:,.0f}" in joined, f"{run_rate:,.0f} missing")
+    check("Plan-for-the-rest adds the unspent budget to the actuals",
+          f"{plan_rest:,.0f}" in joined, f"{plan_rest:,.0f} missing")
+
+    # Without a full-year plan there is nothing to project against.
+    no_fy = build_pptx_pack(agg, PERIOD, tmp / "deck_nofy.pptx",
+                            detail=monthly_detail(PERIOD), ytd=ytd_frame, months=6)
+    check("Deck drops the outlook slide without a full-year plan",
+          len(Presentation(no_fy).slides._sldIdLst) == 6,
+          str(len(Presentation(no_fy).slides._sldIdLst)))
 
     # A single-period file has no year to date; the slide must not appear.
     no_ytd = build_pptx_pack(agg, PERIOD, tmp / "deck_single.pptx")

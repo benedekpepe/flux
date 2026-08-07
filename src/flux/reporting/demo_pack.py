@@ -433,6 +433,113 @@ def _write_expense_report(ws, gl, glf, gll, bud, budf, budl, period) -> None:
     ws.freeze_panes = f"B{first}"
 
 
+def _write_outlook(ws, gl, glf, gll, bud, budf, budl, period) -> None:
+    """Year to date and where the full year lands if nothing changes.
+
+    Two projections, not one, because neither alone is honest. The run rate
+    assumes the rest of the year behaves like the year so far; plan-for-the-rest
+    assumes the remaining months hit budget. The outcome almost always sits
+    between them, and showing both makes the assumption explicit instead of
+    burying it in a single number.
+
+    Months elapsed is an editable cell, so the projection recalculates for a
+    different close without rebuilding the pack.
+    """
+    hide_grid(ws)
+    title_band(ws, "Year to Date & Full-Year Outlook",
+               f"Through {period}  ·  FY {period[:4]}  ·  \u20ac", "L")
+    gR = lambda col: f"'{gl}'!${col}${glf}:${col}${gll}"
+    bR = lambda col: f"'{bud}'!${col}${budf}:${col}${budl}"
+    perno = int(period[:4]) * 100 + int(period[5:7])
+    ytd_gl = f'{gR(GL_PERNO)},"<={perno}"'
+    ytd_bd = f'{bR(BUD_PERNO)},"<={perno}"'
+
+    # The one assumption the reader is allowed to change.
+    ws.merge_cells("A9:B9"); ws["A9"] = "Months elapsed"
+    ws["A9"].font = F_LABEL; ws["A9"].alignment = LEFT
+    ws["C9"] = int(period[5:7]); ws["C9"].font = F_INPUT
+    ws["C9"].number_format = "0"; ws["C9"].fill = FILL_LEVER; ws["C9"].alignment = CENTER
+    outline(ws, 9, 3, 9, 3, GOLD_SIDE)
+    # Across to the last column: merged only to H, the sentence was clipped.
+    ws.merge_cells("E9:L9")
+    ws["E9"] = ("Run rate projects the year as the year so far; "
+                "Plan for rest assumes the remaining months hit budget.")
+    ws["E9"].font = F_NOTE; ws["E9"].alignment = LEFT
+
+    headers(ws, 10, ["", "YTD Act", "YTD Bud", "YTD Var", "Var %",
+                     "FY Budget", "FY used", "Run rate FY", "Plan for rest FY",
+                     "Var to FY Bud", "F/U", "Flag"], center_from=2, center_to=11)
+
+    subs = {"Gross profit", "Operating income (EBIT)", "Net income"}
+    label_row, first, r, ci = {}, 11, 11, 0
+    for line in PNL_STRUCTURE:
+        cols = {c: f"{c}{r}" for c in "ABCDEFGHIJKL"}
+        A, B, C, D, E = (cols[c] for c in "ABCDE")
+        Fc, G, H, I, J, K, L = (cols[c] for c in "FGHIJKL")
+        is_sub = line.label in subs
+        ws[A] = line.label
+        if line.kind == "category":
+            ws[B] = f'=SUMIFS({gR(GL_EUR)},{gR(GL_CAT)},"{line.category}",{ytd_gl})'
+            ws[C] = f'=SUMIFS({bR(BUD_BUD)},{bR(BUD_CAT)},"{line.category}",{ytd_bd})'
+            ws[Fc] = f'=SUMIFS({bR(BUD_BUD)},{bR(BUD_CAT)},"{line.category}")'
+        else:
+            pb, pc, pf = [], [], []
+            for sign, ref in line.components:
+                rr = label_row[ref]
+                pb.append(f"{sign}B{rr}"); pc.append(f"{sign}C{rr}"); pf.append(f"{sign}F{rr}")
+            ws[B] = "=" + "".join(pb)
+            ws[C] = "=" + "".join(pc)
+            ws[Fc] = "=" + "".join(pf)
+        ws[D] = f"={B}-{C}"
+        ws[E] = pct_f(D, C)
+        ws[G] = f'=IF({Fc}=0,"",{B}/{Fc})'
+        # Run rate: the year so far, extended over twelve months.
+        ws[H] = f'=IF($C$9=0,"",{B}/$C$9*12)'
+        # Plan for the rest: actual to date plus the unspent part of the plan.
+        ws[I] = f"={B}+({Fc}-{C})"
+        ws[J] = f"={H}-{Fc}"
+        ws[K] = (f'=IF({J}>=0,"F","U")' if line.favourable == FAV_HIGHER
+                 else f'=IF({J}<=0,"F","U")')
+        ws[L] = flag_f(J, f'IF({Fc}=0,"",{J}/ABS({Fc}))', PL_E, PL_P)
+
+        fill = FILL_IVORY if is_sub else band_fill(ci)
+        if not is_sub:
+            ci += 1
+        for c in "ABCDEFGHIJKL":
+            ws[f"{c}{r}"].fill = fill
+        for c in ("B", "C", "D", "F", "H", "I", "J"):
+            cell = ws[f"{c}{r}"]
+            cell.number_format = CUR; cell.alignment = RIGHT
+            cell.font = F_SUB if is_sub else F_BODY
+        for c in ("E", "G"):
+            cell = ws[f"{c}{r}"]
+            cell.number_format = PCT; cell.alignment = RIGHT
+            cell.font = F_SUB if is_sub else F_BODY
+        ws[A].font = F_SUB if is_sub else F_BODY; ws[A].alignment = LEFT
+        ws[K].alignment = CENTER; ws[K].font = F_FU
+        ws[L].alignment = CENTER; ws[L].font = F_FLAG
+        if is_sub:
+            for c in "ABCDEFGHIJKL":
+                ws[f"{c}{r}"].border = SUBTOTAL_TOP
+        ws.row_dimensions[r].height = 20
+        label_row[line.label] = r
+        r += 1
+    last = r - 1
+
+    badge_cf(ws, f"K{first}:K{last}", f"L{first}:L{last}")
+    variance_cf(ws, f"D{first}:E{last}", f"$K{first}")
+    variance_cf(ws, f"J{first}:J{last}", f"$K{first}")
+    widths(ws, [26, 14, 14, 13, 9, 14, 9, 14, 15, 14, 6, 11])
+    fit_text_columns(ws, ["A"], first, last)
+    ws.cell(row=last + 2, column=1,
+            value="Projections are arithmetic, not a forecast: no seasonality, no "
+                  "pipeline, no management action. They say where the year lands if "
+                  "the stated assumption holds, which is what makes them arguable."
+            ).font = F_NOTE
+    quiet_indicators(ws, 10, last)
+    ws.freeze_panes = f"A{first}"
+
+
 # ===========================================================================
 # By Entity
 # ===========================================================================
@@ -658,12 +765,14 @@ def build_demo_pack(period: str, out_path: str | Path, seed: int = 42) -> Path:
 
     GL, BUD = "GL Transactions", "Budget"
     _write_pnl(wb.create_sheet("P&L Report"), GL, glf, gll, BUD, budf, budl, period, comments, report)
+    _write_outlook(wb.create_sheet("YTD & Outlook"), GL, glf, gll, BUD, budf, budl, period)
     _write_expense_report(wb.create_sheet("Expense Report"), GL, glf, gll, BUD, budf, budl, period)
     _write_by_entity(wb.create_sheet("By Entity"), ent_var, GL, glf, gll, BUD, budf, budl, period)
     _write_cost_centres(wb.create_sheet("Departments & CCs"), dept_var, GL, glf, gll, BUD, budf, budl, period)
     _write_drivers(wb.create_sheet("Drivers"), agg, GL, glf, gll, BUD, budf, budl, period)
 
-    desired = ["P&L Report", "Expense Report", "By Entity", "Departments & CCs", "Drivers", "Budget", "GL Transactions"]
+    desired = ["P&L Report", "YTD & Outlook", "Expense Report", "By Entity",
+               "Departments & CCs", "Drivers", "Budget", "GL Transactions"]
     for i, name in enumerate(desired):
         wb.move_sheet(name, -wb.sheetnames.index(name) + i)
     wb.active = wb.sheetnames.index("P&L Report")

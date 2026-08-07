@@ -43,6 +43,7 @@ INK = RGBColor(0x23, 0x27, 0x2E)
 MUTE = RGBColor(0x8A, 0x8F, 0x98)
 PALE = RGBColor(0xD7, 0xDC, 0xE6)
 SLATE = RGBColor(0x8A, 0xA0, 0xCC)
+PALE_BAR = RGBColor(0xC8, 0xD0, 0xE0)
 GREEN = RGBColor(0x2E, 0x6B, 0x3E)
 RED = RGBColor(0xA6, 0x3A, 0x3A)
 AMBER = RGBColor(0x8A, 0x5A, 0x00)
@@ -96,6 +97,62 @@ def _no_invert(series, idx: int) -> None:
         return
     flag = dpt.makeelement(qn("c:invertIfNegative"), {"val": "0"})
     dpt.find(qn("c:idx")).addnext(flag)
+
+
+def _label_points(plot, values=()) -> None:
+    """Data labels, styled the same on every chart in the deck.
+
+    Outside the bar, in ink: a category can be a rounding error against the
+    others, and a label placed inside that sliver would be white on white.
+
+    The scale follows the numbers. Full digits on a chart of millions run three
+    adjacent labels into each other, so past a million they read in millions -
+    chosen by magnitude rather than per chart, so no two slides format the same
+    figure differently.
+    """
+    plot.has_data_labels = True
+    labels = plot.data_labels
+    biggest = max((abs(float(v)) for v in values), default=0.0)
+    labels.number_format = ('#,##0.0,,"m";(#,##0.0,,"m")' if biggest >= 1_000_000
+                            else '#,##0;(#,##0)')
+    labels.number_format_is_linked = False
+    labels.font.size = Pt(9)
+    labels.font.name = FONT
+    labels.font.bold = True
+    labels.font.color.rgb = INK
+    labels.position = XL_LABEL_POSITION.OUTSIDE_END
+
+
+def _pad_value_axis(chart, values, pad=0.28) -> None:
+    """Leave room for the outside labels, on bounds a reader can hold.
+
+    Padding a raw minimum gives an axis that starts at -101,752 and ticks in
+    steps to match, which is harder to read than the numbers it is scaling. The
+    padded bounds are rounded out to a round step first.
+    """
+    import math
+
+    lo, hi = min(list(values) + [0]), max(list(values) + [0])
+    span = (hi - lo) or 1.0
+    lo = lo - span * pad if lo < 0 else 0
+    hi = hi + span * pad if hi > 0 else 0
+    step = 10 ** max(0, int(math.floor(math.log10(span))) - 1) * 2
+    chart.value_axis.minimum_scale = math.floor(lo / step) * step if lo else 0
+    chart.value_axis.maximum_scale = math.ceil(hi / step) * step if hi else 0
+
+
+def _axis_style(chart) -> None:
+    for axis in (chart.category_axis, chart.value_axis):
+        axis.tick_labels.font.size = Pt(10)
+        axis.tick_labels.font.name = FONT
+        axis.tick_labels.font.color.rgb = INK
+    chart.category_axis.has_major_gridlines = False
+    chart.category_axis.tick_label_position = XL_TICK_LABEL_POSITION.LOW
+    chart.value_axis.has_major_gridlines = True
+    chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(0xE4, 0xE7, 0xEC)
+    chart.value_axis.major_gridlines.format.line.width = Pt(0.75)
+    chart.value_axis.tick_labels.number_format = '#,##0;(#,##0)'
+    chart.value_axis.tick_labels.number_format_is_linked = False
 
 
 def _blank(prs: Presentation):
@@ -398,35 +455,13 @@ def _year_to_date(prs, ytd_report, month_report, months, period, budgeted):
     chart.legend.font.size = Pt(10)
     chart.legend.font.name = FONT
     chart.plots[0].gap_width = 70
-    chart.plots[0].has_data_labels = True
-    ytd_labels = chart.plots[0].data_labels
-    ytd_labels.number_format = '#,##0;(#,##0)'
-    ytd_labels.number_format_is_linked = False
-    ytd_labels.font.size = Pt(9)
-    ytd_labels.font.name = FONT
-    ytd_labels.font.bold = True
-    # Outside the column, in ink. A category can be a rounding error against the
-    # others - Other expenses is a couple of hundred euro on a sixty-thousand
-    # axis - and a label placed inside that sliver is white text on white paper.
-    ytd_labels.font.color.rgb = INK
-    ytd_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+    _label_points(chart.plots[0], list(average) + list(this_month))
     for series, colour in zip(chart.series, (SLATE, BRASS)):
         series.format.fill.solid()
         series.format.fill.fore_color.rgb = colour
         series.invert_if_negative = False
-    for axis in (chart.category_axis, chart.value_axis):
-        axis.tick_labels.font.size = Pt(10)
-        axis.tick_labels.font.name = FONT
-        axis.tick_labels.font.color.rgb = INK
-    chart.category_axis.has_major_gridlines = False
-    # Category names go under the plot, not on the zero line, where a negative
-    # column would otherwise be drawn straight through them.
-    chart.category_axis.tick_label_position = XL_TICK_LABEL_POSITION.LOW
-    chart.value_axis.has_major_gridlines = True
-    chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(0xE4, 0xE7, 0xEC)
-    chart.value_axis.major_gridlines.format.line.width = Pt(0.75)
-    chart.value_axis.tick_labels.number_format = '#,##0;(#,##0)'
-    chart.value_axis.tick_labels.number_format_is_linked = False
+    _axis_style(chart)
+    _pad_value_axis(chart, list(average) + list(this_month))
 
     # Name the read rather than leaving it to be inferred from two bar heights.
     ni_m = line(month_report, "Net income")
@@ -475,6 +510,87 @@ def _year_to_date(prs, ytd_report, month_report, months, period, budgeted):
     return s
 
 
+def _outlook(prs, ytd_report, fy_report, months, period):
+    """Where the year lands, on two stated assumptions.
+
+    A single projected number invites the question it hides: projected how? So
+    both are shown. Run rate carries the year so far forward; plan-for-the-rest
+    assumes the remaining months hit budget. The outcome usually sits between
+    them, and the gap between the two is itself the message - it is the size of
+    what the remaining months have to fix.
+    """
+    s = _blank(prs)
+    _slide_header(s, "Outlook", "Where the year lands",
+                  f"FY {period[:4]}  ·  EUR")
+
+    def line(report, label):
+        return report[report.line == label].iloc[0]
+
+    cats = ["Revenue", "Gross profit", "Operating income (EBIT)", "Net income"]
+    fy_budget = [float(line(fy_report, c).budget) for c in cats]
+    run_rate = [float(line(ytd_report, c).actual) / months * 12 for c in cats]
+    plan_rest = [float(line(ytd_report, c).actual)
+                 + (b - float(line(ytd_report, c).budget))
+                 for c, b in zip(cats, fy_budget)]
+
+    data = CategoryChartData()
+    data.categories = ["Revenue", "Gross profit", "EBIT", "Net income"]
+    data.add_series("FY budget", tuple(fy_budget))
+    data.add_series("If the rest goes to plan", tuple(plan_rest))
+    data.add_series("If the year runs as so far", tuple(run_rate))
+
+    gf = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, MARGIN, Inches(1.66),
+                            Inches(8.1), Inches(4.6), data)
+    chart = gf.chart
+    chart.has_title = False
+    chart.has_legend = True
+    chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+    chart.legend.include_in_layout = False
+    chart.legend.font.size = Pt(10)
+    chart.legend.font.name = FONT
+    chart.plots[0].gap_width = 80
+    _label_points(chart.plots[0], fy_budget + run_rate + plan_rest)
+    for series, colour in zip(chart.series, (PALE_BAR, SLATE, BRASS)):
+        series.format.fill.solid()
+        series.format.fill.fore_color.rgb = colour
+        series.invert_if_negative = False
+    _axis_style(chart)
+    _pad_value_axis(chart, fy_budget + run_rate + plan_rest, pad=0.16)
+
+    ni_bud = line(fy_report, "Net income").budget
+    ni_run = run_rate[-1]
+    ni_plan = plan_rest[-1]
+    gap = ni_plan - ni_run
+
+    panel = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
+                               MARGIN + Inches(8.45), Inches(1.66),
+                               Inches(3.2), Inches(4.6))
+    panel.adjustments[0] = 0.05
+    _fill(panel, IVORY, line=BRASS, width=Pt(1))
+    runs = [("NET INCOME, FULL YEAR", 11, True, BRASS), None,
+            (f"Budget {ni_bud:,.0f}", 13, True, NAVY), None,
+            (f"Run rate {ni_run:,.0f}", 12, False,
+             GREEN if ni_run >= ni_bud else RED), None,
+            (f"Plan for rest {ni_plan:,.0f}", 12, False,
+             GREEN if ni_plan >= ni_bud else RED), None,
+            ("THE GAP BETWEEN THEM", 11, True, BRASS), None,
+            (f"{_mag(abs(gap))}", 17, True, NAVY), None,
+            (f"That is what the remaining {12 - months} months have to make up "
+             f"for the year to land on the better of the two paths.",
+             11, False, INK), None,
+            ("Both are arithmetic, not a forecast: no seasonality, no pipeline, "
+             "no management action.", 10, False, MUTE)]
+    _text(s, MARGIN + Inches(8.7), Inches(1.92), Inches(2.7), Inches(4.1), runs,
+          spacing=Pt(8))
+
+    s.notes_slide.notes_text_frame.text = (
+        "Run rate = year to date divided by months elapsed, times twelve. "
+        "Plan for the rest = actual to date plus the unspent part of the budget. "
+        "Neither is a forecast; they bracket the outcome under a stated assumption."
+    )
+    return s
+
+
 # ---------------------------------------------------------------------------
 # Slide - what moved it
 # ---------------------------------------------------------------------------
@@ -506,22 +622,12 @@ def _drivers(prs, gl, materiality, period, budgeted):
     chart.has_title = False
     plot_area = chart.plots[0]
     plot_area.gap_width = 55
-    plot_area.has_data_labels = True
-    labels = plot_area.data_labels
-    labels.number_format = '#,##0;(#,##0)'
-    labels.number_format_is_linked = False
-    labels.font.size = Pt(10)
-    labels.font.name = FONT
-    # Inside the bar, in white: outside the end, the longest bar's figure ran
-    # straight into its own category name on the left.
-    labels.font.color.rgb = WHITE
-    labels.font.bold = True
-    labels.position = XL_LABEL_POSITION.INSIDE_END
+    _label_points(plot_area, list(plot["var_bud"]))
 
     # PowerPoint's default for a bar series is to invert the fill on negative
     # values, and OOXML treats the flag as true when it is absent. LibreOffice
     # ignores it, so the shortfall bars looked correct in preview and rendered
-    # hollow - with their white labels invisible - in PowerPoint itself.
+    # hollow in PowerPoint itself.
     series = chart.series[0]
     series.invert_if_negative = False
 
@@ -533,19 +639,8 @@ def _drivers(prs, gl, materiality, period, budgeted):
         point.format.fill.fore_color.rgb = GREEN if fu == "F" else RED
         _no_invert(series, idx)
 
-    for axis in (chart.category_axis, chart.value_axis):
-        axis.tick_labels.font.size = Pt(11)
-        axis.tick_labels.font.name = FONT
-        axis.tick_labels.font.color.rgb = INK
-        axis.has_major_gridlines = False
-    # Account names belong at the left edge. Left at the axis they sit on top of
-    # the bars, and a shortfall runs left of zero, straight through its own label.
-    chart.category_axis.tick_label_position = XL_TICK_LABEL_POSITION.LOW
-    chart.value_axis.tick_labels.number_format = '#,##0;(#,##0)'
-    chart.value_axis.tick_labels.number_format_is_linked = False
-    chart.value_axis.has_major_gridlines = True
-    chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(0xE4, 0xE7, 0xEC)
-    chart.value_axis.major_gridlines.format.line.width = Pt(0.75)
+    _axis_style(chart)
+    _pad_value_axis(chart, list(plot["var_bud"]))
 
     # The side panel says what the chart cannot: why these lines and no others.
     panel = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
@@ -554,14 +649,25 @@ def _drivers(prs, gl, materiality, period, budgeted):
     panel.adjustments[0] = 0.05
     _fill(panel, IVORY, line=BRASS, width=Pt(1))
 
-    unfav = material[material.fav_unfav == "U"]["mag"].sum()
-    fav = material[material.fav_unfav == "F"]["mag"].sum()
-    # Spell the total out rather than leaving a number to be taken on trust.
-    parts = " + ".join(_mag(v) for v in material["mag"])
-    total = (f"The {len(material)} bars shown add to {_mag(unfav + fav)}: "
-             f"{parts}.")
-    split = (f"{_mag(unfav)} unfavourable, {_mag(fav)} favourable."
-             if fav else f"All {_mag(unfav)} of it unfavourable.")
+    # Read the drivers by their effect on profit, not by the sign of the raw
+    # variance. Revenue below plan and cost above plan both cut profit but carry
+    # opposite signs, so adding the figures as printed would look like adding
+    # unlike things. Each line's profit impact is the variance signed against
+    # the result, and those do add up.
+    rev_short = -material.loc[material.category == "Revenue", "var_bud"].sum()
+    cost_over = material.loc[material.category != "Revenue", "var_bud"].sum()
+    impact = -(rev_short + cost_over)
+
+    pieces = []
+    if rev_short:
+        pieces.append(f"revenue {_mag(abs(rev_short))} "
+                      f"{'short of' if rev_short > 0 else 'ahead of'} plan")
+    if cost_over:
+        pieces.append(f"costs {_mag(abs(cost_over))} "
+                      f"{'over' if cost_over > 0 else 'under'} plan")
+    total = ("Effect on profit: " + " and ".join(pieces) + "."
+             if pieces else "No net effect on profit.")
+    split = f"{_signed(impact)} on net income."
 
     runs = [("MATERIALITY", 11, True, BRASS), None,
             (f"{materiality.abs_threshold:,.0f} EUR and "
@@ -570,7 +676,7 @@ def _drivers(prs, gl, materiality, period, budgeted):
              "percentage on a small base does not crowd out the real movers.",
              11, False, INK), None,
             (total, 11, False, INK), None,
-            (split, 12, True, RED if not fav else NAVY), None,
+            (split, 13, True, GREEN if impact >= 0 else RED), None,
             ("LARGEST SINGLE MOVER", 11, True, BRASS), None,
             (str(material.iloc[0]["account_name"]), 13, True, NAVY), None,
             (f"{_signed(material.iloc[0]['var_bud'])}  "
@@ -607,31 +713,13 @@ def _spend(prs, detail, period, materiality):
     chart.legend.font.size = Pt(11)
     chart.legend.font.name = FONT
     chart.plots[0].gap_width = 60
-    # A management reader wants the figure, not a bar length to eyeball against
-    # a gridline. Both series are labelled: the comparison is the whole point.
-    chart.plots[0].has_data_labels = True
-    dl = chart.plots[0].data_labels
-    dl.number_format = '#,##0'
-    dl.number_format_is_linked = False
-    dl.font.size = Pt(9)
-    dl.font.name = FONT
-    dl.font.bold = True
-    dl.font.color.rgb = WHITE
-    dl.position = XL_LABEL_POSITION.INSIDE_END
+    _label_points(chart.plots[0], list(plot["actual"]) + list(plot["budget"]))
     for series, colour in zip(chart.series, (SLATE, BRASS)):
         series.format.fill.solid()
         series.format.fill.fore_color.rgb = colour
         series.invert_if_negative = False
-    for axis in (chart.category_axis, chart.value_axis):
-        axis.tick_labels.font.size = Pt(11)
-        axis.tick_labels.font.name = FONT
-        axis.tick_labels.font.color.rgb = INK
-    chart.category_axis.has_major_gridlines = False
-    chart.value_axis.has_major_gridlines = True
-    chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(0xE4, 0xE7, 0xEC)
-    chart.value_axis.major_gridlines.format.line.width = Pt(0.75)
-    chart.value_axis.tick_labels.number_format = '#,##0'
-    chart.value_axis.tick_labels.number_format_is_linked = False
+    _axis_style(chart)
+    _pad_value_axis(chart, list(plot["actual"]) + list(plot["budget"]), pad=0.18)
 
     # Entity consolidation beside it: the same spend, cut the other way.
     ent = entity_variances(detail)
@@ -646,11 +734,16 @@ def _spend(prs, detail, period, materiality):
         _fill(card, BAND, line=RGBColor(0xE4, 0xE7, 0xEC), width=Pt(1))
         _text(s, x0 + Inches(0.22), y + Inches(0.14), Inches(2.2), Inches(0.28),
               [(r.entity, 14, True, NAVY)])
-        _text(s, x0 + Inches(0.22), y + Inches(0.48), Inches(2.4), Inches(0.4),
-              [(f"Net {r.net_actual:,.0f}", 13, False, INK)])
+        _text(s, x0 + Inches(0.22), y + Inches(0.46), Inches(2.4), Inches(0.42),
+              [(f"Net income {r.net_actual:,.0f}", 12, False, INK), None,
+               (f"against a plan of {r.net_budget:,.0f}", 10, False, MUTE)])
+        # Net income is higher-is-better, so earning less than plan is the
+        # unfavourable direction even though the variance reads negative. The
+        # label spells out the comparison, which the bare number did not.
         fu_colour = GREEN if r.fav_unfav == "F" else RED
-        _text(s, x0 + Inches(2.5), y + Inches(0.36), Inches(1.2), Inches(0.4),
-              [(_signed(r.var_bud), 16, True, fu_colour)], align=PP_ALIGN.RIGHT)
+        _text(s, x0 + Inches(2.42), y + Inches(0.3), Inches(1.28), Inches(0.5),
+              [(_signed(r.var_bud), 16, True, fu_colour), None,
+               ("vs budget", 9, False, MUTE)], align=PP_ALIGN.RIGHT)
         y = y + Inches(1.18)
 
     _text(s, MARGIN, H - Inches(0.82), Inches(11.5), Inches(0.3),
@@ -666,6 +759,7 @@ def build_pptx_pack(gl: pd.DataFrame,
                     out_path: str | Path,
                     detail: pd.DataFrame | None = None,
                     ytd: pd.DataFrame | None = None,
+                    fy_budget: pd.DataFrame | None = None,
                     months: int | None = None,
                     entity: str = "Demo Company Ltd",
                     materiality: MaterialityRule | None = None,
@@ -679,8 +773,10 @@ def build_pptx_pack(gl: pd.DataFrame,
     detail : optional transaction-level frame carrying department and entity.
         Without it the spend slide is omitted rather than faked.
     ytd : optional account-level frame cumulative to `period`. Without it the
-        cumulative slide is omitted; a single-period file has no year to date,
-        and repeating the month under that heading would be a lie.
+        cumulative and outlook slides are omitted; a single-period file has no
+        year to date, and repeating the month under that heading would be a lie.
+    fy_budget : optional account-level frame carrying the full-year plan. Needed
+        for the outlook slide, which compares two projections against it.
     months : periods elapsed, used for the average month. Derived as needed.
     budgeted : whether a plan exists; detected from the data when omitted.
     """
@@ -698,8 +794,12 @@ def build_pptx_pack(gl: pd.DataFrame,
     _pnl_table(prs, report, comments, period, budgeted)
     if ytd is not None and not ytd.empty and budgeted:
         elapsed = months or max(1, int(period[5:7]))
-        _year_to_date(prs, build_report(ytd, materiality, budgeted=True),
-                      report, elapsed, period, budgeted)
+        ytd_report = build_report(ytd, materiality, budgeted=True)
+        _year_to_date(prs, ytd_report, report, elapsed, period, budgeted)
+        if fy_budget is not None and not fy_budget.empty:
+            _outlook(prs, ytd_report,
+                     build_report(fy_budget, materiality, budgeted=True),
+                     elapsed, period)
     if budgeted:
         _drivers(prs, gl, materiality, period, budgeted)
     if detail is not None and {"department", "entity"} <= set(detail.columns):
@@ -733,8 +833,14 @@ if __name__ == "__main__":  # pragma: no cover - manual run
     ytd_frame = a.merge(b, on=["account_code", "account_name", "category"],
                         how="outer").fillna(0.0)
 
+    fy = (bud.groupby(["account_code", "account_name", "category"], as_index=False)
+          [["budget_eur", "prior_eur"]].sum()
+          .rename(columns={"budget_eur": "budget", "prior_eur": "prior_year"}))
+    fy["actual"] = 0.0
+
     out = build_pptx_pack(generate_month(period).drop(columns="period"), period,
                           root / "output" / "flux_management_pack.pptx",
                           detail=monthly_detail(period), ytd=ytd_frame,
+                          fy_budget=fy,
                           months=txn[txn.period_no <= cut]["period"].nunique())
     print(f"Written: {out}")
