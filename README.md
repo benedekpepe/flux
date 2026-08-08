@@ -492,7 +492,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 290 checks` means everything is wired up correctly.
+`PASSED all 293 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -553,7 +553,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**290 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**293 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

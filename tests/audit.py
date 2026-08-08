@@ -1188,6 +1188,26 @@ def test_workbooks() -> None:
     check("Every strapline describes the slide beneath it",
           not mismatched, "; ".join(mismatched))
 
+    # The drivers panel states a profit impact. It has to cover every flagged
+    # account, not only the ones that fitted on the chart - it summed the
+    # charted subset and understated the effect by whatever fell off the bottom.
+    from flux.engine import leaf_variances as _leaves
+
+    flagged = _leaves(ytd_frame)
+    flagged = flagged[flagged["material"]]
+    revenue_short = -flagged.loc[flagged.category == "Revenue", "var_bud"].sum()
+    costs_over = flagged.loc[flagged.category != "Revenue", "var_bud"].sum()
+    panel = " ".join(sh.text_frame.text for sl in prs.slides for sh in sl.shapes
+                     if sh.has_text_frame and "Effect on profit" in sh.text_frame.text)
+    for label, value in (("revenue", revenue_short), ("costs", costs_over)):
+        magnitude = (f"{abs(value) / 1_000_000:.1f}m" if abs(value) >= 1_000_000
+                     else f"{abs(value) / 1000:.0f}k")
+        check(f"The drivers panel counts every flagged account's {label}",
+              magnitude in panel, f"{magnitude} not in {panel[:120]}")
+    if len(flagged) > 8:
+        check("A truncated chart says so rather than letting the panel differ",
+              "the chart shows the" in panel, panel[:140])
+
     charts = sum(1 for s in prs.slides for sh in s.shapes if sh.has_chart)
     check("Deck carries native charts, not pictures of charts", charts == 4, str(charts))
     check("Year-to-date slide states the cumulative revenue",

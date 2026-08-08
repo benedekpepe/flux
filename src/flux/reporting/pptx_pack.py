@@ -772,9 +772,14 @@ def _drivers(prs, gl, materiality, period, budgeted, ytd=None):
         return s
 
     material["mag"] = material["var_bud"].abs()
-    material = material.sort_values("mag", ascending=False).head(8)
+    material = material.sort_values("mag", ascending=False)
+    # The chart holds eight bars legibly; the arithmetic beside it must still
+    # cover every flagged account. Summing the charted subset understated the
+    # profit impact by whatever fell off the bottom, while the wording gave no
+    # hint that anything had.
+    charted = material.head(8)
     # Charted bottom-up so the largest mover sits at the top of the bar chart.
-    plot = material.iloc[::-1]
+    plot = charted.iloc[::-1]
 
     data = CategoryChartData()
     data.categories = [n if len(n) < 34 else n[:31] + "..." for n in plot["account_name"]]
@@ -832,6 +837,9 @@ def _drivers(prs, gl, materiality, period, budgeted, ytd=None):
                       f"{'over' if cost_over > 0 else 'under'} plan")
     total = ("Effect on profit: " + " and ".join(pieces) + "."
              if pieces else "No net effect on profit.")
+    if len(material) > len(charted):
+        total += (f" Across all {len(material)} flagged accounts; the chart "
+                  f"shows the {len(charted)} largest.")
     split = f"{_signed(impact)} on net income."
 
     runs = [("MATERIALITY", 11, True, BRASS), None,
