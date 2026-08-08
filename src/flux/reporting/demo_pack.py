@@ -320,7 +320,28 @@ def _write_analysis(ws, L, first_row, blocks, com_width) -> int:
     ws.row_dimensions[r].height = wrapped_height(NO_CAUSE_NOTE, com_width * 2)
     r += 2
 
+    # EBIT and net income reach the same findings - every category's movement
+    # lands on both - so printing both in full is one thought written twice.
+    # The second gets a cross-reference instead, which is shorter and truer.
+    seen = {}
     for label, flag, items in blocks:
+        key = tuple(f.text for f in items if f.heading != "Full year")
+        if key in seen:
+            ws.cell(row=r, column=1, value=f"{label}   \u00b7   {flag}" if flag else label).font = F_SUB
+            ws.cell(row=r, column=1).alignment = LEFT
+            for col in L.span():
+                ws[f"{col}{r}"].fill = FILL_IVORY
+            ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1,
+                           end_column=L.ncols)
+            note = (f"The same picture as {seen[key]} above: the movement, its "
+                    "persistence and the question it raises are identical, "
+                    "because the lines below feed both.")
+            ws.cell(row=r + 1, column=1, value=note).font = F_BODY
+            ws.cell(row=r + 1, column=1).alignment = WRAP
+            ws.row_dimensions[r + 1].height = wrapped_height(note, com_width * 2)
+            r += 3
+            continue
+        seen[key] = label
         title = f"{label}   \u00b7   {flag}" if flag else label
         ws.cell(row=r, column=1, value=title).font = F_SUB
         ws.cell(row=r, column=1).alignment = LEFT
