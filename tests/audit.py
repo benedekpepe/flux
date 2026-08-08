@@ -1168,6 +1168,26 @@ def test_workbooks() -> None:
     check("No slide still headlines the month alone",
           not month_led, f"slides {month_led}")
 
+    # The strapline has to describe the slide under it. "with the month" is a
+    # promise that month figures are present; the analysis slide kept making it
+    # after its findings became cumulative.
+    month_values = ("1,860,192", "121,253", "147,495", "65,669", "142,125")
+    mismatched = []
+    for i, sl in enumerate(prs.slides, 1):
+        texts = [sh.text_frame.text for sh in sl.shapes if sh.has_text_frame]
+        cells = [c.text for sh in sl.shapes if sh.has_table
+                 for r in sh.table.rows for c in r.cells]
+        charts = [str(v) for sh in sl.shapes if sh.has_chart
+                  for ser in sh.chart.plots[0].series for v in ser.values]
+        strap = next((t for t in texts if "\u00b7" in t and "EUR" in t), "")
+        shows_month = (any(v in " ".join(texts + cells) for v in month_values)
+                       or bool(charts) and "average month" in strap)
+        promises_month = "with the month" in strap or "average month" in strap
+        if promises_month != shows_month:
+            mismatched.append(f"slide {i}: {strap!r}")
+    check("Every strapline describes the slide beneath it",
+          not mismatched, "; ".join(mismatched))
+
     charts = sum(1 for s in prs.slides for sh in s.shapes if sh.has_chart)
     check("Deck carries native charts, not pictures of charts", charts == 4, str(charts))
     check("Year-to-date slide states the cumulative revenue",

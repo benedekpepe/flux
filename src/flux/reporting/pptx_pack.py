@@ -513,8 +513,10 @@ def _year_to_date(prs, ytd_report, month_report, months, period, budgeted):
     month's variance beside the average month of the year so far.
     """
     s = _blank(prs)
+    # Naming the comparison, not just the period: this is the one slide that
+    # sets two timeframes against each other rather than reporting either.
     _slide_header(s, "Year to date", f"{months} months in",
-                  f"Through {period}  ·  EUR")
+                  f"Month {period} against the average month  \u00b7  EUR")
 
     def line(report, label):
         return report[report.line == label].iloc[0]
@@ -694,8 +696,11 @@ def _analysis(prs, blocks, period):
     does not record one, and a deck is the last place to invent it.
     """
     s = _blank(prs)
+    # No "with the month": every finding here is cumulative - the concentration
+    # names year-to-date movers, persistence counts months, the outlook projects
+    # the year. The strapline said otherwise until the concentration changed.
     _slide_header(s, "Analysis", "What the numbers point at",
-                  f"YTD through {period}, with the month  \u00b7  EUR")
+                  f"YTD through {period}  \u00b7  EUR")
 
     # EBIT and net income produce the same findings - every category's movement
     # lands on both - so showing them one under the other filled the slide with
