@@ -56,6 +56,9 @@ FONT = "Calibri"
 
 W, H = Inches(13.333), Inches(7.5)
 MARGIN = Inches(0.62)
+#: How many bars the drivers chart holds before it has to truncate. Set from
+#: the plot area (8.1 x 4.6 inches), not from a round number.
+MAX_DRIVER_BARS = 12
 
 
 # ---------------------------------------------------------------------------
@@ -773,11 +776,11 @@ def _drivers(prs, gl, materiality, period, budgeted, ytd=None):
 
     material["mag"] = material["var_bud"].abs()
     material = material.sort_values("mag", ascending=False)
-    # The chart holds eight bars legibly; the arithmetic beside it must still
-    # cover every flagged account. Summing the charted subset understated the
-    # profit impact by whatever fell off the bottom, while the wording gave no
-    # hint that anything had.
-    charted = material.head(8)
+    # The plot area is 8.1 x 4.6 inches, so a dozen bars still leave each one
+    # around a third of an inch with room for its label. The cap used to be
+    # eight, which was set by guess rather than by the space, and it dropped a
+    # flagged account off a chart that had room for it.
+    charted = material.head(MAX_DRIVER_BARS)
     # Charted bottom-up so the largest mover sits at the top of the bar chart.
     plot = charted.iloc[::-1]
 
@@ -791,7 +794,9 @@ def _drivers(prs, gl, materiality, period, budgeted, ytd=None):
     chart.has_legend = False
     chart.has_title = False
     plot_area = chart.plots[0]
-    plot_area.gap_width = 55
+    # Thinner bars need proportionally less air between them, or a full chart
+    # reads as stripes.
+    plot_area.gap_width = 55 if len(plot) <= 8 else 40
     _label_points(plot_area, list(plot["var_bud"]))
 
     # PowerPoint's default for a bar series is to invert the fill on negative

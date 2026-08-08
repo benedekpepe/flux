@@ -1204,9 +1204,18 @@ def test_workbooks() -> None:
                      else f"{abs(value) / 1000:.0f}k")
         check(f"The drivers panel counts every flagged account's {label}",
               magnitude in panel, f"{magnitude} not in {panel[:120]}")
-    if len(flagged) > 8:
-        check("A truncated chart says so rather than letting the panel differ",
-              "the chart shows the" in panel, panel[:140])
+    from flux.reporting.pptx_pack import MAX_DRIVER_BARS
+
+    charted = min(len(flagged), MAX_DRIVER_BARS)
+    # The drivers chart is the one with a single series; the others compare two.
+    bars = max((len(ser.values) for sl in prs.slides for sh in sl.shapes
+                if sh.has_chart and len(sh.chart.plots[0].series) == 1
+                for ser in sh.chart.plots[0].series), default=0)
+    check("The drivers chart plots every flagged account it has room for",
+          bars >= charted, f"{bars} bars for {charted} accounts")
+    check("Nothing is dropped silently when it would have fitted",
+          ("the chart shows the" in panel) == (len(flagged) > MAX_DRIVER_BARS),
+          f"{len(flagged)} flagged, cap {MAX_DRIVER_BARS}: {panel[-90:]}")
 
     charts = sum(1 for s in prs.slides for sh in s.shapes if sh.has_chart)
     check("Deck carries native charts, not pictures of charts", charts == 4, str(charts))
