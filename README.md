@@ -584,21 +584,6 @@ every green run leaves a downloadable workbook.
 - The synthetic company is seeded and deterministic, which makes the demo stable
   and the tests reproducible — but its variances are generated, not real.
 
-## Roadmap
-
-- [x] Core variance engine with roll-up, F/U logic and materiality flagging.
-- [x] Excel export with live formulas and conditional formatting.
-- [x] Variance commentary, with optional LLM enrichment.
-- [x] Ingestion layer: smart column mapping for arbitrary client files.
-- [x] Streamlit app: upload, confirm mapping, download the pack.
-- [x] Accounting sign conventions and the actuals-only path.
-- [x] Verification suite and CI.
-- [x] Public deploy (Streamlit Community Cloud).
-- [x] PowerPoint management pack (python-pptx).
-- [x] Year-to-date view and a run-rate outlook, in the workbook and the deck.
-- [x] One column layout across every reporting sheet, off shared lever cells.
-- [ ] Period-over-period trend view, from the periods already in the file.
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
