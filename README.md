@@ -105,12 +105,13 @@ nobody has time to check four assumptions.
 5. **Excel pack** — the workbook is written with **live formulas over an input
    sheet**, so an edited input recalculates the whole pack. The sheets that get
    built depend on the dimensions present in the data.
-6. **Deck** — the same numbers as eight slides: the result, the P&L, the year to
-   date, where the year lands, what moved it, and where the money went. Native PowerPoint charts and
-   tables, not images, so the recipient can edit them. The cumulative slide
-   compares the month against the average month so far, which is the difference
-   between a bad month and a trend; a single-period file drops that slide rather
-   than repeat the month under a cumulative heading.
+6. **Deck** — the same numbers as eight slides: a cover, the result, the P&L,
+   the year to date, where the year lands, what moved it, what the numbers point
+   at, and where the money went. Native PowerPoint charts and tables, not
+   images, so the recipient can edit them. The cumulative slide compares the
+   month against the average month so far, which is the difference between a bad
+   month and a trend; a single-period file drops that slide rather than repeat
+   the month under a cumulative heading.
 7. **App** — a Streamlit front end for upload, mapping confirmation, preview and
    download of either output.
 
@@ -239,9 +240,9 @@ code, because a chart of accounts legitimately holds *Net interest expense* and
 The account code alone cannot say what a line is. `5` opens material cost in a
 US chart, every cost by nature in a Hungarian one, and an expense account in
 SAP; `8` is revenue in SAP and a cost in Hungary. Reading the first digit and
-hoping reported Hungarian revenue as an operating expense and swapped SAP's
-revenue and materials — a finished-looking pack with the bottom line inverted,
-which is the worst way to be wrong.
+hoping for the best would report Hungarian revenue as an operating expense and
+swap SAP's revenue and materials — a finished-looking pack with the bottom line
+inverted, which is the worst way to be wrong.
 
 So two independent readings are taken and made to agree:
 
@@ -439,7 +440,7 @@ flux/
 │       ├── rows.py              # the report row every sheet writes the same way
 │       ├── demo_pack.py         # the multi-entity showcase, from generated data
 │       ├── client_pack.py       # the pack built from an ingested client file
-│       └── pptx_pack.py         # the seven-slide management deck
+│       └── pptx_pack.py         # the eight-slide management deck
 ├── scripts/
 │   ├── demo.py                  # console P&L, drivers and commentary
 │   └── make_template.py         # builds data/input_template.xlsx
@@ -449,6 +450,12 @@ flux/
 ├── docs/                        # screenshots used in this README
 └── .github/workflows/ci.yml     # lint, verification, pack build, app smoke test
 ```
+
+The demo pack ships all eight slides — cover, result, P&L, year to date,
+outlook, drivers, analysis and spend. A single-period file drops the year-to-date
+and outlook slides, and an actuals-only file drops the drivers slide, so a
+partial file gets a shorter deck rather than one that repeats the same page under
+a different heading.
 
 `styling`, `formulas` and `rows` are shared by both packs, so the demo and the
 client pack render the same visual language and reach the same materiality

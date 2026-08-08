@@ -96,6 +96,12 @@ def _join_names(items: list[str]) -> str:
 def _clause(var: float, pct, fu_word: str | None = None) -> str:
     """One timeframe, as a phrase: amount, percentage, direction, verdict."""
     direction = "above" if var >= 0 else "below"
+    # A zero variance has no direction and no verdict worth printing. This has
+    # to be checked before the percentage: a 0/0 line has pct = None and would
+    # otherwise read "€0 above budget, percentage not meaningful, favourable",
+    # which is three things wrong on one line.
+    if abs(var) < 0.5:
+        return "in line with budget"
     if not _not_meaningful(pct) and abs(pct) < 0.005:
         # "In line with budget, unfavourable" is a contradiction: a line that
         # did not move has no verdict worth printing.
@@ -105,6 +111,16 @@ def _clause(var: float, pct, fu_word: str | None = None) -> str:
     else:
         core = f"{_mag(var)} ({_pct(pct)}) {direction} budget"
     return f"{core}, {fu_word}" if fu_word else core
+
+
+def _article(word: str) -> str:
+    """`a` or `an` for the word that follows, from its first sound.
+
+    Written out because "an unfavourable" and "a favourable" both appear in the
+    headline, and hardcoding either flips wrong half the time. Vowel-letter
+    based, which covers every word this module actually emits.
+    """
+    return "an" if word[:1].lower() in "aeiou" else "a"
 
 
 _VERDICTS = {
@@ -199,10 +215,11 @@ def _template_commentary(
                else f"Net income of {_mag(ni['actual'])}")
     ebit_term = (f"an operating loss of {_mag(ebit['actual'])}" if ebit["actual"] < 0
                  else f"operating income (EBIT) of {_mag(ebit['actual'])}")
+    ni_fu = fu_word(ni['fav_unfav'])
     p1 = (
         f"{ni_term} came in {_mag(ni['var_bud'])} "
         f"({_pct(ni['var_bud_pct'])}) {dir_word(ni['var_bud'])} budget, "
-        f"an {fu_word(ni['fav_unfav'])} result. This reflects {ebit_term}, "
+        f"{_article(ni_fu)} {ni_fu} result. This reflects {ebit_term}, "
         f"{_mag(ebit['var_bud'])} ({_pct(ebit['var_bud_pct'])}) "
         f"{dir_word(ebit['var_bud'])} plan."
     )
@@ -334,9 +351,9 @@ def line_comments(
         if not len(drv):
             return ""
         names = _join_names([d["account_name"].lower() for _, d in drv.iterrows()])
-        lead = ("offsetting movements in" if len(set(drv["fav_unfav"])) > 1
-                else "driven by")
-        return f" {lead.capitalize()[0]}{lead[1:]} {names}."
+        lead = ("Offsetting movements in" if len(set(drv["fav_unfav"])) > 1
+                else "Driven by")
+        return f" {lead} {names}."
 
     comments: dict[str, str] = {}
     for _, r in report.iterrows():

@@ -593,7 +593,7 @@ EXPENSE_TYPE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("Financing & bank", ("kamat", "banki", "bankkolts", "penzugyi muveletek",
                           "interest", "bank charge", "bank fee", "financing")),
     ("Payroll benefits", ("bergarulek", "jarulek", "szocialis hozzajarulas",
-                          "szochо", "payroll tax", "social contribution",
+                          "szocho", "payroll tax", "social contribution",
                           "national insurance", "pension", "benefit")),
     ("Employee incentives", ("premium", "jutalom", "bonusz", "osztonzo",
                              "bonus", "incentive", "commission")),

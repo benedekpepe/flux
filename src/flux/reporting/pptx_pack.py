@@ -2,8 +2,15 @@
 PowerPoint pack: the deck a controller sends upward after close.
 
 The Excel pack is the working file - every figure a live formula over the input
-sheet. This is the other half of the same job: five slides that state the
-result, name what moved it, and stop. Same engine, same numbers, same palette.
+sheet. This is the other half of the same job: up to eight slides - cover, the
+result, the P&L, year to date, outlook, drivers, analysis and spend - that
+state the result, name what moved it, and stop. Same engine, same numbers, same
+palette.
+
+Slides that a shorter file cannot support are dropped rather than filled with a
+restatement of the ones above them: a single-period file has no year-to-date or
+outlook, an actuals-only file has no drivers, and a caller that supplies no
+analysis findings gets no analysis slide.
 
 Built with python-pptx rather than a Node deck library so the capability ships
 inside the Python package with no extra runtime.
@@ -1056,6 +1063,7 @@ if __name__ == "__main__":  # pragma: no cover - manual run
     from ..synthetic_data import (DEFAULT_PERIOD, generate_budget_year,
                                   generate_month, generate_ytd_transactions,
                                   monthly_detail)
+    from .demo_pack import demo_analysis_blocks, demo_ytd_detail
     root = Path(__file__).resolve().parents[3]
     period = DEFAULT_PERIOD
 
@@ -1078,9 +1086,14 @@ if __name__ == "__main__":  # pragma: no cover - manual run
           .rename(columns={"budget_eur": "budget", "prior_eur": "prior_year"}))
     fy["actual"] = 0.0
 
+    # analysis_blocks and ytd_detail are passed so the CLI build matches the
+    # app: without them the analysis and spend-cumulative slides drop out and
+    # the deck ships a slide short of the one the README documents.
     out = build_pptx_pack(generate_month(period).drop(columns="period"), period,
                           root / "output" / "flux_management_pack.pptx",
                           detail=monthly_detail(period), ytd=ytd_frame,
                           fy_budget=fy,
-                          months=txn[txn.period_no <= cut]["period"].nunique())
+                          months=txn[txn.period_no <= cut]["period"].nunique(),
+                          analysis_blocks=demo_analysis_blocks(period),
+                          ytd_detail=demo_ytd_detail(period))
     print(f"Written: {out}")

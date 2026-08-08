@@ -585,6 +585,16 @@ def _dimension_findings(txns, bud, perno, months, *, dim, values, child,
               .sum().rename(columns={"_v": "budget"}))
         drv = drv.merge(pl, on=child, how="outer").fillna(0.0)
         drv["var_bud"] = drv["actual"] - drv["budget"]
+        # Cost centres arrive keyed by code. Passing the code straight to the
+        # concentration line puts "mk30300 (86.2k)" in prose, which reads as an
+        # error next to the sheet where the same row is labelled "MK30300
+        # Events". A display column mapped through CC_NAMES fixes it; other
+        # dimensions carry their own names and use the child column directly.
+        if child == "cost_centre":
+            drv["_display"] = drv[child].map(CC_NAMES).fillna(drv[child])
+            name_col = "_display"
+        else:
+            name_col = child
         hist = (t[tm & (t["period_no"] <= perno)]
                 .groupby(["period", "period_no"], as_index=False)["_v"].sum()
                 .rename(columns={"_v": "actual"})
@@ -596,7 +606,7 @@ def _dimension_findings(txns, bud, perno, months, *, dim, values, child,
             drivers=drv, total_var=y_a - y_b, history=hist,
             run_rate=y_a / months * 12 if months else 0.0,
             fy_budget=b.loc[bm, "_v"].sum(), ytd_actual=y_a,
-            months_elapsed=months, higher_is_better=higher, name_col=child)))
+            months_elapsed=months, higher_is_better=higher, name_col=name_col)))
     return out
 
 

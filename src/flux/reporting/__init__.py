@@ -6,7 +6,7 @@ Excel reporting layer.
     rows          the report row every sheet writes the same way
     demo_pack     the full multi-entity showcase, from generated data
     client_pack   the pack built from an ingested client file
-    pptx_pack     the management deck: the same numbers, seven slides
+    pptx_pack     the management deck: the same numbers, eight slides
 
 Both packs write live formulas over an input sheet rather than static values, so
 an edited input recalculates the whole workbook. Every reporting sheet in either
