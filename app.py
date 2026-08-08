@@ -67,6 +67,15 @@ def _demo_blocks():
     return demo_analysis_blocks(SAMPLE_PERIOD)
 
 
+def _demo_ytd_detail():
+    """The cumulative detail behind the deck's spend slide, same source again."""
+    try:
+        from flux.reporting import demo_ytd_detail
+    except ImportError:
+        return None
+    return demo_ytd_detail(SAMPLE_PERIOD)
+
+
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PPTX_MIME = ("application/vnd.openxmlformats-officedocument"
              ".presentationml.presentation")
@@ -447,7 +456,8 @@ with tab_sample:
                        detail=monthly_detail(SAMPLE_PERIOD),
                        ytd=_sample_ytd(), fy_budget=_sample_fy_budget(),
                        months=int(SAMPLE_PERIOD[5:7]),
-                       analysis_blocks=_demo_blocks()),
+                       analysis_blocks=_demo_blocks(),
+                       ytd_detail=_demo_ytd_detail()),
                    Path(tempfile.gettempdir()) / "flux_sample_deck.pptx")
     with col_x:
         _render_download("pack_sample", "Download flux_sample_pack.xlsx")

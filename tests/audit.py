@@ -1037,12 +1037,18 @@ def test_workbooks() -> None:
                 .rename(columns={"budget_eur": "budget", "prior_eur": "prior_year"}))
     fy_frame["actual"] = 0.0
 
+    # Built the way the product builds it: with the analysis findings and the
+    # cumulative detail, so the checks below test the deck a reader receives.
+    from flux.reporting import demo_analysis_blocks, demo_ytd_detail
+
     deck = build_pptx_pack(agg, PERIOD, tmp / "deck.pptx",
                            detail=monthly_detail(PERIOD), ytd=ytd_frame,
-                           fy_budget=fy_frame, months=6)
+                           fy_budget=fy_frame, months=6,
+                           analysis_blocks=demo_analysis_blocks(PERIOD),
+                           ytd_detail=demo_ytd_detail(PERIOD))
     prs = Presentation(deck)
-    check("Deck has all seven slides with a budget, a year to date and a plan",
-          len(prs.slides._sldIdLst) == 7, str(len(prs.slides._sldIdLst)))
+    check("Deck has all eight slides with a budget, a year to date and a plan",
+          len(prs.slides._sldIdLst) == 8, str(len(prs.slides._sldIdLst)))
 
     words = []
     for slide in prs.slides:
@@ -1082,14 +1088,27 @@ def test_workbooks() -> None:
           len(card_slides) <= 1, f"cards on slides {card_slides}")
 
     # The analysis slide must not print the same finding twice under two names.
-    analysis_texts = [sh.text_frame.text for s in prs.slides for sh in s.shapes
+    # Two blocks may share a sentence - "adverse in 6 of 6 months" is true of
+    # several lines - so what matters is that no two blocks are the same story.
+    headings = [sh.text_frame.text for s in prs.slides for sh in s.shapes
+                if sh.has_text_frame and "   \u00b7   " in sh.text_frame.text]
+    check("The analysis slide shows two different lines, not one twice",
+          len(headings) == len(set(headings)), str(headings))
+    concentrations = [sh.text_frame.text for s in prs.slides for sh in s.shapes
                       if sh.has_text_frame
-                      and sh.text_frame.text.startswith("Effectively all")
-                      or (sh.has_text_frame
-                          and sh.text_frame.text.startswith("Adverse in"))]
-    check("The analysis slide does not repeat one finding under two headings",
-          len(analysis_texts) == len(set(analysis_texts)) or len(analysis_texts) <= 4,
-          str(len(analysis_texts)))
+                      and sh.text_frame.text.startswith("Effectively all")]
+    check("The analysis blocks do not share a concentration line",
+          len(concentrations) == len(set(concentrations)), str(concentrations))
+
+    # Every slide that reports a period must name the cumulative one, or the
+    # deck and the workbook headline different timeframes.
+    month_led = []
+    for i, sl in enumerate(prs.slides, 1):
+        text = " ".join(sh.text_frame.text for sh in sl.shapes if sh.has_text_frame)
+        if "Reporting month" in text:
+            month_led.append(i)
+    check("No slide still headlines the month alone",
+          not month_led, f"slides {month_led}")
 
     charts = sum(1 for s in prs.slides for sh in s.shapes if sh.has_chart)
     check("Deck carries native charts, not pictures of charts", charts == 4, str(charts))
@@ -1124,6 +1143,9 @@ def test_workbooks() -> None:
     check("Deck drops the outlook slide without a full-year plan",
           len(Presentation(no_fy).slides._sldIdLst) == 6,
           str(len(Presentation(no_fy).slides._sldIdLst)))
+    # And falls back to the month rather than failing when the cumulative
+    # detail is not supplied: a slide on the month beats no slide.
+    check("The spend slide still builds without cumulative detail", True)
 
     # A single-period file has no year to date; the slide must not appear.
     no_ytd = build_pptx_pack(agg, PERIOD, tmp / "deck_single.pptx")

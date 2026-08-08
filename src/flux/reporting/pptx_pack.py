@@ -720,11 +720,20 @@ def _analysis(prs, blocks, period):
 # ---------------------------------------------------------------------------
 # Slide - what moved it
 # ---------------------------------------------------------------------------
-def _drivers(prs, gl, materiality, period, budgeted):
-    s = _blank(prs)
-    _slide_header(s, "Drivers", "What moved the result", f"Reporting month {period}  ·  EUR")
+def _drivers(prs, gl, materiality, period, budgeted, ytd=None):
+    """The accounts that moved the result, cumulatively where the data allows.
 
-    leaves = leaf_variances(gl, materiality)
+    The workbook's Drivers sheet reports the year to date beside the month, so a
+    deck showing only the month named a different set of accounts from the file
+    it ships with.
+    """
+    s = _blank(prs)
+    frame = ytd if ytd is not None else gl
+    meta = (f"YTD through {period}  \u00b7  EUR" if ytd is not None
+            else f"Reporting month {period}  \u00b7  EUR")
+    _slide_header(s, "Drivers", "What moved the result", meta)
+
+    leaves = leaf_variances(frame, materiality)
     material = leaves[leaves["material"]].copy()
     if material.empty:
         _text(s, MARGIN, Inches(2.4), Inches(9.0), Inches(0.6),
@@ -816,11 +825,24 @@ def _drivers(prs, gl, materiality, period, budgeted):
 # ---------------------------------------------------------------------------
 # Slide 5 - where the money went
 # ---------------------------------------------------------------------------
-def _spend(prs, detail, period, materiality):
-    s = _blank(prs)
-    _slide_header(s, "Spend", "Where the money went", f"Reporting month {period}  ·  EUR")
+def _spend(prs, detail, period, materiality, ytd_detail=None):
+    """Departmental spend and the entity consolidation.
 
-    dept = department_variances(detail, materiality).sort_values("actual", ascending=False)
+    Reported on the year to date when it is available, with the month named
+    underneath each entity - the same order of reading as every other page.
+    """
+    s = _blank(prs)
+    frame = ytd_detail if ytd_detail is not None else detail
+    if ytd_detail is not None and "prior_year" not in frame.columns:
+        # The cumulative frame is built for this pack and carries no prior year;
+        # the engine expects the column, so it is supplied as zero rather than
+        # letting a missing comparison take the slide down.
+        frame = frame.assign(prior_year=0.0)
+    meta = (f"YTD through {period}, with the month  \u00b7  EUR"
+            if ytd_detail is not None else f"Reporting month {period}  \u00b7  EUR")
+    _slide_header(s, "Spend", "Where the money went", meta)
+
+    dept = department_variances(frame, materiality).sort_values("actual", ascending=False)
     plot = dept.iloc[::-1]
 
     data = CategoryChartData()
@@ -848,7 +870,8 @@ def _spend(prs, detail, period, materiality):
     _pad_value_axis(chart, list(plot["actual"]) + list(plot["budget"]), pad=0.18)
 
     # Entity consolidation beside it: the same spend, cut the other way.
-    ent = entity_variances(detail)
+    ent = entity_variances(frame)
+    ent_month = entity_variances(detail) if ytd_detail is not None else None
     x0 = MARGIN + Inches(7.75)
     _text(s, x0, Inches(1.66), Inches(3.9), Inches(0.3),
           [("BY LEGAL ENTITY", 11, True, BRASS)])
@@ -860,8 +883,14 @@ def _spend(prs, detail, period, materiality):
         _fill(card, BAND, line=RGBColor(0xE4, 0xE7, 0xEC), width=Pt(1))
         _text(s, x0 + Inches(0.22), y + Inches(0.14), Inches(2.2), Inches(0.28),
               [(r.entity, 14, True, NAVY)])
+        month_note = ""
+        if ent_month is not None:
+            row = ent_month[ent_month["entity"] == r.entity]
+            if len(row):
+                month_note = f"month {row.iloc[0]['net_actual']:,.0f}"
         _text(s, x0 + Inches(0.22), y + Inches(0.46), Inches(2.4), Inches(0.42),
-              [(f"Net income {r.net_actual:,.0f}", 12, False, INK), None,
+              [(f"Net income {r.net_actual:,.0f}"
+                + (f"   ({month_note})" if month_note else ""), 12, False, INK), None,
                (f"against a plan of {r.net_budget:,.0f}", 10, False, MUTE)])
         # Net income is higher-is-better, so earning less than plan is the
         # unfavourable direction even though the variance reads negative. The
@@ -890,7 +919,8 @@ def build_pptx_pack(gl: pd.DataFrame,
                     entity: str = "Demo Company Ltd",
                     materiality: MaterialityRule | None = None,
                     budgeted: bool | None = None,
-                    analysis_blocks: list | None = None) -> Path:
+                    analysis_blocks: list | None = None,
+                    ytd_detail: pd.DataFrame | None = None) -> Path:
     """Build the management deck.
 
     Parameters
@@ -906,6 +936,8 @@ def build_pptx_pack(gl: pd.DataFrame,
         for the outlook slide, which compares two projections against it.
     months : periods elapsed, used for the average month. Derived as needed.
     budgeted : whether a plan exists; detected from the data when omitted.
+    ytd_detail : the dimensional detail cumulatively, at the same grain as
+        `detail`. Without it the spend slide falls back to the month.
     analysis_blocks : optional findings from `flux.analysis`, the same ones the
         workbook prints under each sheet. Without them the analysis slide is
         omitted rather than filled with a restatement of the table.
@@ -938,11 +970,11 @@ def build_pptx_pack(gl: pd.DataFrame,
                      build_report(fy_budget, materiality, budgeted=True),
                      elapsed, period)
     if budgeted:
-        _drivers(prs, gl, materiality, period, budgeted)
+        _drivers(prs, gl, materiality, period, budgeted, ytd)
     if analysis_blocks:
         _analysis(prs, analysis_blocks, period)
     if detail is not None and {"department", "entity"} <= set(detail.columns):
-        _spend(prs, detail, period, materiality)
+        _spend(prs, detail, period, materiality, ytd_detail)
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

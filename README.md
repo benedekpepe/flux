@@ -83,7 +83,7 @@ nobody has time to check four assumptions.
 
 ![Department spend variance with cost centres nested beneath each department](docs/departments.png)
 
-**PowerPoint deck — the same numbers as seven slides, for sending upward**
+**PowerPoint deck — the same numbers as eight slides, on the same layout as the workbook**
 
 ![Four slides of the generated management deck: cover, result, P&L and year to date](docs/pptx-pack.png)
 
@@ -105,7 +105,7 @@ nobody has time to check four assumptions.
 5. **Excel pack** — the workbook is written with **live formulas over an input
    sheet**, so an edited input recalculates the whole pack. The sheets that get
    built depend on the dimensions present in the data.
-6. **Deck** — the same numbers as seven slides: the result, the P&L, the year to
+6. **Deck** — the same numbers as eight slides: the result, the P&L, the year to
    date, where the year lands, what moved it, and where the money went. Native PowerPoint charts and
    tables, not images, so the recipient can edit them. The cumulative slide
    compares the month against the average month so far, which is the difference
@@ -485,7 +485,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 273 checks` means everything is wired up correctly.
+`PASSED all 281 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -546,7 +546,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**273 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**281 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

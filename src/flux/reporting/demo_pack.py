@@ -1121,6 +1121,14 @@ def _write_drivers(ws, agg, gl, glf, gll, bud, budf, budl, period,
     quiet_indicators(ws, 4, last)
     ws.freeze_panes = L.frozen(first)
 
+def demo_ytd_detail(period: str, seed: int = 42):
+    """The sample company's cumulative detail, for the deck's spend slide."""
+    from ..synthetic_data import generate_ytd_transactions, generate_budget_year
+    perno = int(period[:4]) * 100 + int(period[5:7])
+    return _ytd_detail(generate_ytd_transactions(period, seed),
+                       generate_budget_year(seed), perno)
+
+
 def demo_analysis_blocks(period: str, seed: int = 42) -> list:
     """The findings the deck shows, built from the same generated ledger.
 
