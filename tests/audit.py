@@ -1056,6 +1056,41 @@ def test_workbooks() -> None:
           f"{ni_actual:,.0f}" in joined, "net income missing from the deck")
     check("Deck explains the materiality rule", "materiality" in joined.lower())
 
+    # The deck and the workbook must headline the same timeframe, or the same
+    # company reads two ways depending on which file you opened.
+    cover = " ".join(sh.text_frame.text for sh in prs.slides[0].shapes
+                     if sh.has_text_frame)
+    ytd_ni = line(build_report(ytd_frame), "Net income").actual
+    check("The deck's cover headlines the year to date, as the workbook does",
+          f"{ytd_ni:,.0f}" in cover, cover[:120])
+    check("The cover still carries the month as the second reading",
+          f"{ni_actual:,.0f}" in cover, cover[:120])
+
+    # Table cells are not shape text frames, so the headers have to be read off
+    # the table itself.
+    table_heads = [cell.text for s in prs.slides for sh in s.shapes
+                   if sh.has_table for cell in sh.table.rows[0].cells]
+    check("The deck's P&L table carries both timeframes",
+          "YTD Act" in table_heads and "Month Act" in table_heads,
+          str(table_heads))
+
+    # Two slides showing the same three figures is two slides doing one job.
+    card_slides = [i for i, s in enumerate(prs.slides)
+                   if sum(1 for sh in s.shapes if sh.has_text_frame
+                          and sh.text_frame.text.strip().startswith("REVENUE")) ]
+    check("Only one slide carries the year-to-date KPI cards",
+          len(card_slides) <= 1, f"cards on slides {card_slides}")
+
+    # The analysis slide must not print the same finding twice under two names.
+    analysis_texts = [sh.text_frame.text for s in prs.slides for sh in s.shapes
+                      if sh.has_text_frame
+                      and sh.text_frame.text.startswith("Effectively all")
+                      or (sh.has_text_frame
+                          and sh.text_frame.text.startswith("Adverse in"))]
+    check("The analysis slide does not repeat one finding under two headings",
+          len(analysis_texts) == len(set(analysis_texts)) or len(analysis_texts) <= 4,
+          str(len(analysis_texts)))
+
     charts = sum(1 for s in prs.slides for sh in s.shapes if sh.has_chart)
     check("Deck carries native charts, not pictures of charts", charts == 4, str(charts))
     check("Year-to-date slide states the cumulative revenue",
