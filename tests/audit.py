@@ -1198,7 +1198,7 @@ def test_workbooks() -> None:
     revenue_short = -flagged.loc[flagged.category == "Revenue", "var_bud"].sum()
     costs_over = flagged.loc[flagged.category != "Revenue", "var_bud"].sum()
     panel = " ".join(sh.text_frame.text for sl in prs.slides for sh in sl.shapes
-                     if sh.has_text_frame and "Effect on profit" in sh.text_frame.text)
+                     if sh.has_text_frame and "MATERIALITY" in sh.text_frame.text)
     for label, value in (("revenue", revenue_short), ("costs", costs_over)):
         magnitude = (f"{abs(value) / 1_000_000:.1f}m" if abs(value) >= 1_000_000
                      else f"{abs(value) / 1000:.0f}k")
@@ -1213,6 +1213,22 @@ def test_workbooks() -> None:
                 for ser in sh.chart.plots[0].series), default=0)
     check("The drivers chart plots every flagged account it has room for",
           bars >= charted, f"{bars} bars for {charted} accounts")
+    # The combined effect of the flagged lines is not net income, and it does
+    # not tie to the P&L either - the lines below the floors move the result
+    # too. "-1.0m on net income" read as though net income were minus a million.
+    drivers_panel = " ".join(sh.text_frame.text for sl in prs.slides
+                             for sh in sl.shapes if sh.has_text_frame
+                             and "MATERIALITY" in sh.text_frame.text)
+    check("The drivers panel does not present its total as net income itself",
+          "on net income." not in drivers_panel, drivers_panel[-160:])
+    check("It names what the figure measures",
+          "combined effect on profit" in drivers_panel, drivers_panel[-160:])
+    ni_var = line(build_report(ytd_frame), "Net income").var_bud
+    ni_mag = (f"{abs(ni_var) / 1_000_000:.1f}m" if abs(ni_var) >= 1_000_000
+              else f"{abs(ni_var) / 1000:.0f}k")
+    check("It reconciles to the P&L rather than leaving the gap unexplained",
+          ni_mag in drivers_panel, f"{ni_mag} not in {drivers_panel[-160:]}")
+
     check("Nothing is dropped silently when it would have fitted",
           ("the chart shows the" in panel) == (len(flagged) > MAX_DRIVER_BARS),
           f"{len(flagged)} flagged, cap {MAX_DRIVER_BARS}: {panel[-90:]}")

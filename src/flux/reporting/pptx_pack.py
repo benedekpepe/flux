@@ -753,7 +753,8 @@ def _analysis(prs, blocks, period):
 # ---------------------------------------------------------------------------
 # Slide - what moved it
 # ---------------------------------------------------------------------------
-def _drivers(prs, gl, materiality, period, budgeted, ytd=None):
+def _drivers(prs, gl, materiality, period, budgeted, ytd=None,
+             ytd_report=None):
     """The accounts that moved the result, cumulatively where the data allows.
 
     The workbook's Drivers sheet reports the year to date beside the month, so a
@@ -840,12 +841,32 @@ def _drivers(prs, gl, materiality, period, budgeted, ytd=None):
     if cost_over:
         pieces.append(f"costs {_mag(abs(cost_over))} "
                       f"{'over' if cost_over > 0 else 'under'} plan")
-    total = ("Effect on profit: " + " and ".join(pieces) + "."
-             if pieces else "No net effect on profit.")
+    total = ("These lines are " + " and ".join(pieces) + "."
+             if pieces else "These lines net to no effect on profit.")
     if len(material) > len(charted):
         total += (f" Across all {len(material)} flagged accounts; the chart "
                   f"shows the {len(charted)} largest.")
-    split = f"{_signed(impact)} on net income."
+
+    # "-1.0m on net income" read as though net income were minus a million. It
+    # is the combined effect of the flagged lines, and net income is a different
+    # figure entirely - so the label now names what it is measuring.
+    split = f"{_signed(impact)} combined effect on profit"
+
+    # And it does not tie to the P&L: the lines that cleared neither floor move
+    # the result too, mostly the other way. A number that looks like it should
+    # reconcile and does not is worse than one that explains itself.
+    reported = None
+    if ytd_report is not None:
+        rows = ytd_report[ytd_report.line == "Net income"]
+        if len(rows):
+            ni = rows.iloc[0]
+            residual = ni.var_bud - impact
+            reported = (
+                f"Net income itself is {_signed(ni.var_bud)} against plan: the "
+                f"lines below both floors account for the remaining "
+                f"{_mag(abs(residual))}, "
+                f"{'adding to' if residual < 0 else 'offsetting'} the flagged ones."
+            )
 
     runs = [("MATERIALITY", 11, True, BRASS), None,
             (f"{materiality.abs_threshold:,.0f} EUR and "
@@ -855,6 +876,8 @@ def _drivers(prs, gl, materiality, period, budgeted, ytd=None):
              11, False, INK), None,
             (total, 11, False, INK), None,
             (split, 13, True, GREEN if impact >= 0 else RED), None,
+            (reported, 10, False, MUTE) if reported else None,
+            None if reported else None,
             ("LARGEST SINGLE MOVER", 11, True, BRASS), None,
             (str(material.iloc[0]["account_name"]), 13, True, NAVY), None,
             (f"{_signed(material.iloc[0]['var_bud'])}  "
@@ -1016,7 +1039,7 @@ def build_pptx_pack(gl: pd.DataFrame,
                      build_report(fy_budget, materiality, budgeted=True),
                      elapsed, period)
     if budgeted:
-        _drivers(prs, gl, materiality, period, budgeted, ytd)
+        _drivers(prs, gl, materiality, period, budgeted, ytd, ytd_report)
     if analysis_blocks:
         _analysis(prs, analysis_blocks, period)
     if detail is not None and {"department", "entity"} <= set(detail.columns):
