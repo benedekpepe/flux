@@ -333,14 +333,14 @@ wants them:
 | Finding | Answers |
 | --- | --- |
 | **Concentration** | is it one line or forty — and which ones |
-| **Persistence** | how many of the months so far went the wrong way, and whether the gap is widening |
+| **Persistence** | how many of the months so far went the wrong way |
 | **Full year** | where the run rate lands against the plan, and what the remaining months would have to do |
 | **Ask** | the question the shape of the variance makes worth putting to someone |
 
 > **Other operating costs · BOTH**
 > **Concentration** — Effectively all of the movement sits in 3 lines: marketing
 > & advertising (€47.0k), IT & software (€319) and facilities & office (€149).
-> **Persistence** — Adverse in 6 of 6 months and the gap has been widening.
+> **Persistence** — Adverse in 6 of 6 months.
 > **Full year** — At the current run rate the year lands €511.2k over a €3.5m
 > plan. Holding the plan leaves €1.5m for the remaining 6 months, against
 > €333.4k a month so far.
@@ -349,6 +349,13 @@ wants them:
 > the plan was set before the current activity level.
 
 ### What it will not do
+
+**It counts; it does not read a trend.** Persistence says how many months went
+the wrong way and stops there. Saying whether the gap was *widening* would be a
+claim nothing else in the pack could corroborate: the only other figure
+describing the series is the run rate, and `year to date ÷ months × 12` is an
+average. Three ledgers with a widening gap, a narrowing gap and a single spike
+can share one run rate exactly — and did, in the test that removed the claim.
 
 **It does not say why.** A ledger does not carry causes — a line text in a real
 extract reads `Invoice 88213` or `Reclass to 5211`, not "campaign overspend" —
@@ -485,7 +492,7 @@ terminal only: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 python tests/audit.py
 ```
 
-`PASSED all 285 checks` means everything is wired up correctly.
+`PASSED all 289 checks` means everything is wired up correctly.
 
 ### 3. Run the app
 
@@ -546,7 +553,7 @@ build_client_pack(gl, "2025-06", "pack.xlsx")
 python tests/audit.py
 ```
 
-**285 checks** covering the P&L arithmetic and roll-up, F/U logic per account
+**289 checks** covering the P&L arithmetic and roll-up, F/U logic per account
 type, the two-condition materiality rule and the not-meaningful escape, number
 and period parsing (including all four negative conventions), sign
 normalisation, column mapping (including the guard that stops a document number

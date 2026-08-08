@@ -872,6 +872,31 @@ def test_workbooks() -> None:
     p1 = persistence(steady, higher_is_better=False)
     check("Persistence counts the adverse months",
           p1 is not None and "6 of 6" in p1.text, "" if p1 is None else p1.text)
+
+    # Persistence counts and stops. It used to say whether the gap was widening,
+    # which nothing else in the pack could corroborate: the run rate is an
+    # average, and these three series share one. Two of them would have received
+    # opposite verdicts from the same projection.
+    months = {"period_no": [202501 + i for i in range(6)],
+              "period": [f"2025-0{i + 1}" for i in range(6)],
+              "budget": [1000.0] * 6}
+    shapes = {"widening": [1050, 1100, 1150, 1250, 1350, 1400],
+              "narrowing": [1400, 1350, 1250, 1150, 1100, 1050]}
+    verdicts = set()
+    for name, actuals in shapes.items():
+        frame = pd.DataFrame(dict(months, actual=[float(a) for a in actuals]))
+        text = persistence(frame, higher_is_better=False).text
+        verdicts.add(text)
+        check(f"Persistence makes no trend claim on a {name} series",
+              "widening" not in text and "narrowing" not in text, text)
+    check("Two series the run rate cannot tell apart read the same",
+          len(verdicts) == 1, str(verdicts))
+    spike = pd.DataFrame(dict(months, actual=[1000.0, 1000.0, 1000.0, 2300.0,
+                                              1000.0, 1000.0]))
+    check("The count reads as English when only one month is adverse",
+          persistence(spike, higher_is_better=False).text
+          == "Adverse in 1 of 6 months.",
+          persistence(spike, higher_is_better=False).text)
     spread = pd.DataFrame({"account_name": list("abcdefghij"),
                            "var_bud": [10.0] * 10})
     c1 = concentration(spread, 100.0)

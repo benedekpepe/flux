@@ -85,11 +85,21 @@ def concentration(drivers: pd.DataFrame, total_var: float, *,
 
 
 def persistence(history: pd.DataFrame, *, higher_is_better: bool) -> Finding | None:
-    """How many of the months so far went the wrong way, and whether it is growing.
+    """How many of the months so far went the wrong way.
 
     `history` is one row per period with `actual` and `budget`. This is the
     difference between a bad month and a bad year, and it is the first thing a
     reader asks after seeing a variance.
+
+    It counts, and stops there. An earlier version also said whether the gap was
+    widening or narrowing, and that was a claim the pack could not support: the
+    only other figure describing the series is the run rate, which is
+    `year to date / months x 12` - an average, and an average cannot tell a
+    widening gap from a narrowing one from a single spike. Three ledgers with
+    identical run rates and opposite trends produced the same projection and
+    three different verdicts here, with nothing on the page to settle which was
+    right. Counting is verifiable against the months themselves; the shape of
+    the series is not, until the pack shows it.
     """
     if history is None or len(history) < 2:
         return None
@@ -102,18 +112,9 @@ def persistence(history: pd.DataFrame, *, higher_is_better: bool) -> Finding | N
         return Finding("Persistence",
                        f"Not once in {n} months has this line been on the wrong "
                        "side of plan.")
-    # Widening is measured on the adverse months only: a favourable month
-    # between two overspends is not the gap closing.
-    gaps = hist.loc[adverse, "var"].abs().tolist()
-    widening = sum(1 for a, b in zip(gaps, gaps[1:]) if b > a)
-    trend = ""
-    if len(gaps) >= 3:
-        trend = (" and the gap has been widening" if widening > len(gaps) / 2
-                 else " though the gap has been narrowing")
-    word = "month" if n_bad == 1 else "months"
-    return Finding(
-        "Persistence",
-        f"Adverse in {n_bad} of {n} {word}{trend}.")
+    # The noun belongs to the total, not to the count: "1 of 6 months".
+    word = "month" if n == 1 else "months"
+    return Finding("Persistence", f"Adverse in {n_bad} of {n} {word}.")
 
 
 def full_year(run_rate: float, fy_budget: float, ytd_actual: float,
