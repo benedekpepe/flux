@@ -1079,6 +1079,20 @@ def test_workbooks() -> None:
     check("The deck's P&L table carries both timeframes",
           "YTD Act" in table_heads and "Month Act" in table_heads,
           str(table_heads))
+    # Actual against budget is the whole statement; a variance column on its own
+    # makes the reader do the subtraction backwards, and the plan went missing
+    # when the year-to-date columns were added.
+    check("The deck's P&L table shows the plan, not only the variance",
+          "YTD Bud" in table_heads, str(table_heads))
+    check("The deck's P&L table carries the materiality flag",
+          "Flag" in table_heads, str(table_heads))
+
+    # The narrative has to describe the figures above it.
+    result_text = " ".join(sh.text_frame.text for sh in prs.slides[1].shapes
+                           if sh.has_text_frame and len(sh.text_frame.text) > 120)
+    ytd_ni_mag = f"{abs(line(build_report(ytd_frame), 'Net income').actual) / 1000:.1f}k"
+    check("The result slide's narrative describes the year to date, as its cards do",
+          ytd_ni_mag in result_text, result_text[:110])
 
     # Two slides showing the same three figures is two slides doing one job.
     card_slides = [i for i, s in enumerate(prs.slides)

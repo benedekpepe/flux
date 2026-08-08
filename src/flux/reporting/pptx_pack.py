@@ -322,7 +322,7 @@ def _kpi_card(s, x, y, w, label, value, delta, favourable, budgeted,
               [(second, 11, False, MUTE)])
 
 
-def _result(prs, report, gl, period, budgeted, ytd_report=None):
+def _result(prs, report, gl, period, budgeted, ytd_report=None, ytd_gl=None):
     s = _blank(prs)
     headline = ytd_report if ytd_report is not None else report
     subtitle = ("Where the year has got to" if ytd_report is not None
@@ -351,7 +351,12 @@ def _result(prs, report, gl, period, budgeted, ytd_report=None):
                   if budgeted else "", head.fav_unfav == "F", budgeted, second)
 
     # The narrative's first two paragraphs: the bottom line, then revenue and margin.
-    text = generate_commentary(report, gl).split("\n\n")
+    # The narrative has to describe the figures above it. With year-to-date
+    # cards and a month-based paragraph, the slide's headline and its prose
+    # were about two different periods - and the heading says "the year".
+    narrative_report = ytd_report if ytd_report is not None else report
+    narrative_gl = ytd_gl if ytd_gl is not None else gl
+    text = generate_commentary(narrative_report, narrative_gl).split("\n\n")
     body = s.shapes.add_textbox(MARGIN, Inches(3.72), W - 2 * MARGIN, Inches(3.1))
     tf = body.text_frame
     tf.word_wrap = True
@@ -374,6 +379,13 @@ def _result(prs, report, gl, period, budgeted, ytd_report=None):
 # ---------------------------------------------------------------------------
 # Slide 3 - the P&L
 # ---------------------------------------------------------------------------
+def _flag_for(month_row, ytd_row):
+    """The workbook's MONTH / YTD / BOTH verdict, for a deck row."""
+    return ("BOTH" if month_row.material and ytd_row.material
+            else "MONTH" if month_row.material
+            else "YTD" if ytd_row.material else "")
+
+
 def _pnl_table(prs, report, comments, period, budgeted, ytd_report=None):
     s = _blank(prs)
     both = ytd_report is not None and budgeted
@@ -384,8 +396,13 @@ def _pnl_table(prs, report, comments, period, budgeted, ytd_report=None):
     # The workbook reports both timeframes on every line; a deck that showed
     # only the month made the same statement two different ways.
     if both:
-        heads = ["Line", "YTD Act", "YTD Var", "Var %", "Month Act",
-                 "Month Var", "F/U", ""]
+        # The year-to-date block carries its plan, because "actual against
+        # budget" is the whole statement and a variance column alone makes the
+        # reader do the subtraction backwards. The month keeps actual and
+        # variance only: it is the secondary reading here, its budget is on the
+        # sheet, and an eleventh column would make this a spreadsheet.
+        heads = ["Line", "YTD Act", "YTD Bud", "YTD Var", "Var %", "Month Act",
+                 "Month Var", "F/U", "Flag", ""]
     elif budgeted:
         heads = ["Line", "Actual", "Budget", "Variance", "Var %", "F/U", ""]
     else:
@@ -393,8 +410,9 @@ def _pnl_table(prs, report, comments, period, budgeted, ytd_report=None):
     rows = len(report) + 1
     # The money columns hold at most nine characters, the commentary a sentence,
     # so width goes where the text actually is.
-    widths = ([Inches(2.3), Inches(1.2), Inches(1.15), Inches(0.85),
-               Inches(1.2), Inches(1.15), Inches(0.5), Inches(3.74)] if both
+    widths = ([Inches(1.95), Inches(1.08), Inches(1.08), Inches(1.0),
+               Inches(0.72), Inches(1.02), Inches(0.98), Inches(0.42),
+               Inches(0.62), Inches(2.88)] if both
               else [Inches(2.45), Inches(1.25), Inches(1.25), Inches(1.3),
                     Inches(0.95), Inches(0.55), Inches(4.34)])
 
@@ -438,17 +456,24 @@ def _pnl_table(prs, report, comments, period, budgeted, ytd_report=None):
         cell(i, 0, r.line, bold=sub, align=PP_ALIGN.LEFT, fill=bg)
         if both:
             y = ytd_report[ytd_report.line == r.line].iloc[0]
-            cell(i, 1, f"{y.actual:,.0f}", bold=sub, fill=bg)
-            cell(i, 2, f"{y.var_bud:,.0f}", bold=sub, fill=bg,
+            cell(i, 1, f"{y.actual:,.0f}", bold=sub, fill=bg, size=11)
+            cell(i, 2, f"{y.budget:,.0f}", bold=sub, fill=bg, size=11)
+            cell(i, 3, f"{y.var_bud:,.0f}", bold=sub, fill=bg, size=11,
                  colour=GREEN if y.fav_unfav == "F" else RED)
-            cell(i, 3, _pct(y.var_bud_pct), bold=sub, fill=bg)
-            cell(i, 4, f"{r.actual:,.0f}", bold=sub, fill=bg, colour=MUTE)
-            cell(i, 5, f"{r.var_bud:,.0f}", bold=sub, fill=bg, colour=MUTE)
-            cell(i, 6, r.fav_unfav, bold=True, align=PP_ALIGN.CENTER, fill=bg,
-                 colour=GREEN if r.fav_unfav == "F" else RED)
+            cell(i, 4, _pct(y.var_bud_pct), bold=sub, fill=bg, size=11)
+            cell(i, 5, f"{r.actual:,.0f}", bold=sub, fill=bg, colour=MUTE, size=11)
+            cell(i, 6, f"{r.var_bud:,.0f}", bold=sub, fill=bg, colour=MUTE, size=11)
+            cell(i, 7, r.fav_unfav, bold=True, align=PP_ALIGN.CENTER, fill=bg,
+                 colour=GREEN if r.fav_unfav == "F" else RED, size=11)
+            # The flag names which timeframe cleared both materiality floors -
+            # the one column that tells a reader where to stop, and it was the
+            # one the deck left behind.
+            flag = _flag_for(r, y)
+            cell(i, 8, flag, bold=True, align=PP_ALIGN.CENTER, fill=bg,
+                 size=9, colour=RED if flag == "BOTH" else MUTE)
             note = comments.get(r.line, "")
-            cell(i, 7, note if len(note) <= 118 else note[:115].rstrip(" ,;") + "...",
-                 size=9, colour=MUTE, align=PP_ALIGN.LEFT, fill=bg)
+            cell(i, 9, note if len(note) <= 96 else note[:93].rstrip(" ,;") + "...",
+                 size=8.5, colour=MUTE, align=PP_ALIGN.LEFT, fill=bg)
             continue
         cell(i, 1, f"{r.actual:,.0f}", bold=sub, fill=bg)
         if budgeted:
@@ -888,10 +913,13 @@ def _spend(prs, detail, period, materiality, ytd_detail=None):
             row = ent_month[ent_month["entity"] == r.entity]
             if len(row):
                 month_note = f"month {row.iloc[0]['net_actual']:,.0f}"
-        _text(s, x0 + Inches(0.22), y + Inches(0.46), Inches(2.4), Inches(0.42),
-              [(f"Net income {r.net_actual:,.0f}"
-                + (f"   ({month_note})" if month_note else ""), 12, False, INK), None,
-               (f"against a plan of {r.net_budget:,.0f}", 10, False, MUTE)])
+        # The month on its own line: appended to the headline it wrapped, and
+        # pushed the plan underneath it out of the card.
+        _text(s, x0 + Inches(0.22), y + Inches(0.44), Inches(2.4), Inches(0.44),
+              [(f"Net income {r.net_actual:,.0f}", 12, False, INK), None,
+               ((f"{month_note}  ·  against a plan of {r.net_budget:,.0f}"
+                 if month_note else f"against a plan of {r.net_budget:,.0f}"),
+                10, False, MUTE)])
         # Net income is higher-is-better, so earning less than plan is the
         # unfavourable direction even though the variance reads negative. The
         # label spells out the comparison, which the bare number did not.
@@ -961,7 +989,7 @@ def build_pptx_pack(gl: pd.DataFrame,
     ytd_ni = (ytd_report[ytd_report.line == "Net income"].iloc[0]
               if ytd_report is not None else None)
     _cover(prs, entity, period, ni, budgeted, ytd_ni)
-    _result(prs, report, gl, period, budgeted, ytd_report)
+    _result(prs, report, gl, period, budgeted, ytd_report, ytd)
     _pnl_table(prs, report, comments, period, budgeted, ytd_report)
     if have_ytd:
         _year_to_date(prs, ytd_report, report, elapsed, period, budgeted)
