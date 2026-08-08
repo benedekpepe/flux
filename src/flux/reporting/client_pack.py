@@ -158,8 +158,8 @@ def _pnl_blocks(month, ytd, agg, months):
         drivers = pd.DataFrame([
             {"account_name": ref.label,
              "var_bud": signs.get(ref.category, 0) *
-                        (month.loc[month["category"] == ref.category, "actual"].sum()
-                         - month.loc[month["category"] == ref.category, "budget"].sum())}
+                        (ytd.loc[ytd["category"] == ref.category, "actual"].sum()
+                         - ytd.loc[ytd["category"] == ref.category, "budget"].sum())}
             for ref in PNL_STRUCTURE if ref.kind == "category"
             and ref.category in signs])
         sign_col = ytd["category"].map(signs)
@@ -173,7 +173,7 @@ def _pnl_blocks(month, ytd, agg, months):
         whole = agg["category"].map(signs)
         ytd_actual = signed_ytd["_a"].sum()
         blocks.append((line.label, flag, findings(
-            drivers=drivers, total_var=m_var, history=hist,
+            drivers=drivers, total_var=y_var, history=hist,
             run_rate=ytd_actual / months * 12 if months else 0.0,
             fy_budget=(agg["budget"] * whole).dropna().sum(),
             ytd_actual=ytd_actual, months_elapsed=months,
@@ -208,7 +208,10 @@ def _findings_for(month, ytd, agg, perno, months, *, dim, child, values=None,
                         y_var, _pct_or_none(y_var, yy["budget"].sum()))
         if not flag:
             continue
-        drv = mm.groupby(child, as_index=False)[["actual", "budget"]].sum()
+        # Cumulative drivers, because the rest of the block is cumulative:
+        # month movers under a year-to-date heading is two timeframes in one
+        # paragraph with nothing to tell them apart.
+        drv = yy.groupby(child, as_index=False)[["actual", "budget"]].sum()
         drv["var_bud"] = drv["actual"] - drv["budget"]
         hist = None
         if "period_no" in yy.columns and yy["period_no"].nunique() > 1:
@@ -216,7 +219,7 @@ def _findings_for(month, ytd, agg, perno, months, *, dim, child, values=None,
                       [["actual", "budget"]].sum())
         ytd_actual = yy["actual"].sum()
         out.append((value, flag, findings(
-            drivers=drv, total_var=m_var, history=hist,
+            drivers=drv, total_var=y_var, history=hist,
             run_rate=ytd_actual / months * 12 if months else 0.0,
             fy_budget=whole.loc[whole[dim] == value, "budget"].sum(),
             ytd_actual=ytd_actual, months_elapsed=months,

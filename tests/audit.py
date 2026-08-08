@@ -834,6 +834,25 @@ def test_workbooks() -> None:
     check("Nothing in the pack claims to know why a line moved",
           not offenders, str(offenders[:4]))
 
+    # Every finding in a block has to describe the same period. Concentration
+    # was built from the month while persistence and the outlook were
+    # cumulative - two timeframes in one paragraph, with nothing on the page to
+    # tell a reader which number belonged to which.
+    from flux.reporting import demo_analysis_blocks as _blocks
+
+    from flux.reporting import demo_ytd_detail as _ydet
+
+    ytd_acc = (_ydet(PERIOD).groupby(["account_code", "account_name", "category"],
+                                     as_index=False)[["actual", "budget"]].sum())
+    ytd_acc["prior_year"] = 0.0
+    ebit_ytd = abs(line(build_report(ytd_acc), "Operating expenses").var_bud)
+    for label, _flag, items in _blocks(PERIOD):
+        if label != "Operating income (EBIT)":
+            continue
+        conc = next((f.text for f in items if f.heading == "Concentration"), "")
+        check("Concentration describes the same period as the rest of its block",
+              f"{ebit_ytd / 1000:.1f}k" in conc, conc[:110])
+
     # The findings themselves: shape in, sentence out.
     one_off = pd.DataFrame({
         "period": ["2025-0" + str(i) for i in range(1, 7)],

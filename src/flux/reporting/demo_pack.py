@@ -368,8 +368,8 @@ def _pct_or_none(var, base):
     return None if abs(base) < 100 else var / abs(base)
 
 
-def _computed_block(out, line, line_var, agg, ytd_agg, txns, bud, perno, months,
-                    higher):
+def _computed_block(out, line, line_var, ytd_line_var, agg, ytd_agg, txns, bud,
+                    perno, months, higher):
     """Analysis for a subtotal, attributed to the lines that make it up."""
     from ..analysis import findings
 
@@ -383,8 +383,9 @@ def _computed_block(out, line, line_var, agg, ytd_agg, txns, bud, perno, months,
             # A cost below a profit line pushes it the other way, so the sign of
             # its contribution is the opposite of the sign of its variance.
             direction = 1 if sign == "+" else -1
+            # Cumulative, like every other finding in the block.
             parts.append({"account_name": node.label,
-                          "var_bud": direction * line_var[node.label]})
+                          "var_bud": direction * ytd_line_var[node.label]})
             feed.append((node.category, direction))
         else:
             flip = 1 if sign == "+" else -1
@@ -413,7 +414,7 @@ def _computed_block(out, line, line_var, agg, ytd_agg, txns, bud, perno, months,
                    on=["period", "period_no"], how="outer").fillna(0.0))
     ytd_actual = t.loc[t["period_no"] <= perno, "_v"].sum()
     out.append((line.label, flag, findings(
-        drivers=pd.DataFrame(parts), total_var=m_var, history=hist,
+        drivers=pd.DataFrame(parts), total_var=y_var, history=hist,
         run_rate=ytd_actual / months * 12 if months else 0.0,
         fy_budget=b["_v"].sum(), ytd_actual=ytd_actual,
         months_elapsed=months, higher_is_better=higher)))
@@ -448,22 +449,26 @@ def _pnl_findings(txns, bud, agg, ytd_agg, perno, months):
     # the two the reader stops on - and skipping them left the P&L with no
     # analysis at all. Its drivers are the lines beneath it, signed: that is the
     # level at which "what moved EBIT" has an answer.
-    line_var = {}
-    for l in PNL_STRUCTURE:
-        if l.kind == "category":
-            rows = agg[agg["category"] == l.category]
-            line_var[l.label] = rows["actual"].sum() - rows["budget"].sum()
-        else:
-            line_var[l.label] = sum(
-                (1 if sign == "+" else -1) * line_var[ref]
-                for sign, ref in l.components)
+    def line_variances(frame):
+        out = {}
+        for node in PNL_STRUCTURE:
+            if node.kind == "category":
+                rows = frame[frame["category"] == node.category]
+                out[node.label] = rows["actual"].sum() - rows["budget"].sum()
+            else:
+                out[node.label] = sum((1 if sign == "+" else -1) * out[ref]
+                                      for sign, ref in node.components)
+        return out
+
+    line_var = line_variances(agg)
+    ytd_line_var = line_variances(ytd_agg)
 
     out = []
     for line in PNL_STRUCTURE:
         higher = line.favourable == FAV_HIGHER
         if line.kind != "category":
-            _computed_block(out, line, line_var, agg, ytd_agg, txns, bud,
-                            perno, months, higher)
+            _computed_block(out, line, line_var, ytd_line_var, agg, ytd_agg,
+                            txns, bud, perno, months, higher)
             continue
         cat = line.category
         mrows = agg[agg["category"] == cat]
@@ -474,14 +479,14 @@ def _pnl_findings(txns, bud, agg, ytd_agg, perno, months):
                         y_var, _pct_or_none(y_var, yrows["budget"].sum()))
         if not flag:
             continue
-        drivers = mrows.copy()
+        drivers = yrows.copy()
         drivers["var_bud"] = drivers["actual"] - drivers["budget"]
         hist = _history(txns, bud, txns["category"] == cat,
                         bud["category"] == cat, perno)
         fy = bud[bud["category"] == cat]["budget_eur"].sum()
         ytd_actual = yrows["actual"].sum()
         out.append((line.label, flag, findings(
-            drivers=drivers, total_var=m_var, history=hist,
+            drivers=drivers, total_var=y_var, history=hist,
             run_rate=ytd_actual / months * 12 if months else 0.0,
             fy_budget=fy, ytd_actual=ytd_actual, months_elapsed=months,
             higher_is_better=higher)))
@@ -505,15 +510,15 @@ def _expense_findings(txns, bud, perno, months):
                         y_var, _pct_or_none(y_var, ytd_b["budget_eur"].sum()))
         if not flag:
             continue
-        drivers = (month_t.groupby("expense_type", as_index=False)["amount_eur"]
+        drivers = (ytd_t.groupby("expense_type", as_index=False)["amount_eur"]
                    .sum().rename(columns={"amount_eur": "actual"}))
-        plan = (month_b.groupby("expense_type", as_index=False)["budget_eur"]
+        plan = (ytd_b.groupby("expense_type", as_index=False)["budget_eur"]
                 .sum().rename(columns={"budget_eur": "budget"}))
         drivers = drivers.merge(plan, on="expense_type", how="outer").fillna(0.0)
         drivers["var_bud"] = drivers["actual"] - drivers["budget"]
         ytd_actual = ytd_t["amount_eur"].sum()
         out.append((group_name, flag, findings(
-            drivers=drivers, total_var=m_var,
+            drivers=drivers, total_var=y_var,
             history=_history(txns, bud, tm, bm, perno),
             run_rate=ytd_actual / months * 12 if months else 0.0,
             fy_budget=bud[bm]["budget_eur"].sum(), ytd_actual=ytd_actual,
@@ -553,9 +558,9 @@ def _dimension_findings(txns, bud, perno, months, *, dim, values, child,
                         y_a - y_b, _pct_or_none(y_a - y_b, y_b))
         if not flag:
             continue
-        drv = (t[tm & (t["period_no"] == perno)].groupby(child, as_index=False)["_v"]
+        drv = (t[tm & (t["period_no"] <= perno)].groupby(child, as_index=False)["_v"]
                .sum().rename(columns={"_v": "actual"}))
-        pl = (b[bm & (b["period_no"] == perno)].groupby(child, as_index=False)["_v"]
+        pl = (b[bm & (b["period_no"] <= perno)].groupby(child, as_index=False)["_v"]
               .sum().rename(columns={"_v": "budget"}))
         drv = drv.merge(pl, on=child, how="outer").fillna(0.0)
         drv["var_bud"] = drv["actual"] - drv["budget"]
@@ -567,7 +572,7 @@ def _dimension_findings(txns, bud, perno, months, *, dim, values, child,
                        .rename(columns={"_v": "budget"}),
                        on=["period", "period_no"], how="outer").fillna(0.0))
         out.append((value, flag, findings(
-            drivers=drv, total_var=m_a - m_b, history=hist,
+            drivers=drv, total_var=y_a - y_b, history=hist,
             run_rate=y_a / months * 12 if months else 0.0,
             fy_budget=b.loc[bm, "_v"].sum(), ytd_actual=y_a,
             months_elapsed=months, higher_is_better=higher, name_col=child)))
