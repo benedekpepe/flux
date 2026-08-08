@@ -899,10 +899,18 @@ def _drivers(prs, gl, materiality, period, budgeted, ytd=None,
 # Slide 5 - where the money went
 # ---------------------------------------------------------------------------
 def _spend(prs, detail, period, materiality, ytd_detail=None):
-    """Departmental spend and the entity consolidation.
+    """Departmental spend on the left, entity net income on the right.
 
-    Reported on the year to date when it is available, with the month named
-    underneath each entity - the same order of reading as every other page.
+    Two cuts of the same ledger: departmental spend against plan, and each
+    legal entity's net income against plan. Both are on the year to date when
+    the data allows, with the month named underneath each entity so a reader
+    sees the same order of reading as every other page.
+
+    The two cuts answer different questions - spend says where the money went,
+    net income says which entity earned it - so each panel is labelled with the
+    measure it holds. The slide used to be titled "Spend" with the entities
+    beside it, which read as though the entity figures were also spend when
+    they were net income.
     """
     s = _blank(prs)
     frame = ytd_detail if ytd_detail is not None else detail
@@ -913,10 +921,20 @@ def _spend(prs, detail, period, materiality, ytd_detail=None):
         frame = frame.assign(prior_year=0.0)
     meta = (f"YTD through {period}, with the month  \u00b7  EUR"
             if ytd_detail is not None else f"Reporting month {period}  \u00b7  EUR")
-    _slide_header(s, "Spend", "Where the money went", meta)
+    # Title names both cuts rather than only one: "Spend" ended up over a panel
+    # showing net income, which read like a mislabelling of the figures beside
+    # it. "By department and entity" says what the slide contains without
+    # claiming either half is the whole.
+    _slide_header(s, "By department and entity",
+                  "Where the money went, and where it landed", meta)
 
     dept = department_variances(frame, materiality).sort_values("actual", ascending=False)
     plot = dept.iloc[::-1]
+
+    # Left panel header: matches the parallel "BY LEGAL ENTITY · NET INCOME"
+    # on the right, so a reader can tell the two cuts apart at a glance.
+    _text(s, MARGIN, Inches(1.62), Inches(7.4), Inches(0.3),
+          [("BY DEPARTMENT  \u00b7  SPEND", 11, True, BRASS)])
 
     data = CategoryChartData()
     data.categories = list(plot["department"])
@@ -924,8 +942,8 @@ def _spend(prs, detail, period, materiality, ytd_detail=None):
     data.add_series("Budget", tuple(plot["budget"]))
     data.add_series("Actual", tuple(plot["actual"]))
 
-    gf = s.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, MARGIN, Inches(1.62),
-                            Inches(7.4), Inches(4.5), data)
+    gf = s.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, MARGIN, Inches(2.02),
+                            Inches(7.4), Inches(4.2), data)
     chart = gf.chart
     chart.has_title = False
     chart.has_legend = True
@@ -942,13 +960,16 @@ def _spend(prs, detail, period, materiality, ytd_detail=None):
     _axis_style(chart)
     _pad_value_axis(chart, list(plot["actual"]) + list(plot["budget"]), pad=0.18)
 
-    # Entity consolidation beside it: the same spend, cut the other way.
+    # Entity consolidation beside it: the same ledger, cut the other way. This
+    # one reports net income - revenue less every cost - so the header names
+    # the measure, and each card labels its own figure with "Net income" so
+    # the panels cannot be confused with the spend chart to their left.
     ent = entity_variances(frame)
     ent_month = entity_variances(detail) if ytd_detail is not None else None
     x0 = MARGIN + Inches(7.75)
-    _text(s, x0, Inches(1.66), Inches(3.9), Inches(0.3),
-          [("BY LEGAL ENTITY", 11, True, BRASS)])
-    y = Inches(2.06)
+    _text(s, x0, Inches(1.62), Inches(3.9), Inches(0.3),
+          [("BY LEGAL ENTITY  \u00b7  NET INCOME", 11, True, BRASS)])
+    y = Inches(2.02)
     for r in ent.itertuples():
         card = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x0, y,
                                   Inches(3.9), Inches(1.02))
@@ -965,7 +986,7 @@ def _spend(prs, detail, period, materiality, ytd_detail=None):
         # pushed the plan underneath it out of the card.
         _text(s, x0 + Inches(0.22), y + Inches(0.44), Inches(2.4), Inches(0.44),
               [(f"Net income {r.net_actual:,.0f}", 12, False, INK), None,
-               ((f"{month_note}  ·  against a plan of {r.net_budget:,.0f}"
+               ((f"{month_note}  \u00b7  against a plan of {r.net_budget:,.0f}"
                  if month_note else f"against a plan of {r.net_budget:,.0f}"),
                 10, False, MUTE)])
         # Net income is higher-is-better, so earning less than plan is the
@@ -977,9 +998,13 @@ def _spend(prs, detail, period, materiality, ytd_detail=None):
                ("vs budget", 9, False, MUTE)], align=PP_ALIGN.RIGHT)
         y = y + Inches(1.18)
 
+    # Footer names what each panel measures so the two do not read as the same
+    # figure cut two ways. Spend excludes revenue and ties to the cost lines of
+    # the P&L; net income is revenue less every cost and ties to the bottom line.
     _text(s, MARGIN, H - Inches(0.82), Inches(11.5), Inches(0.3),
-          [("Departmental figures are spend only: revenue is excluded, so the "
-            "totals tie to the cost lines of the P&L, not to net income.",
+          [("Left: department spend against plan, revenue excluded so the totals "
+            "tie to the cost lines of the P&L. Right: each entity's net income "
+            "against plan, which ties to the group Net income on the P&L.",
             10, False, MUTE)])
     return s
 

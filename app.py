@@ -405,8 +405,8 @@ with tab_upload:
             st.markdown(f"#### {step + 1} · Download the pack")
             st.caption(
                 "The workbook is the working file — every figure a live formula "
-                "over the input sheet. The deck is the five slides you send "
-                "upward. Same engine, same numbers."
+                "over the input sheet. The deck is the management slides you "
+                "send upward, drawn from the same numbers."
             )
             gen_x, gen_p = st.columns(2)
             if gen_x.button("Generate Excel pack", type="primary", width="stretch"):

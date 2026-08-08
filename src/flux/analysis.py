@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from .commentary import _join_names, _mag, _pct
+from .commentary import _join_names, _mag, _pct, _prose_name
 from .engine import MaterialityRule
 
 
@@ -65,7 +65,7 @@ def concentration(drivers: pd.DataFrame, total_var: float, *,
             f"The movement is spread across {len(same_way)} lines rather than "
             f"sitting in a few: the largest {len(top)} account for "
             f"{_pct(share)} of it. There is no single driver to chase.")
-    named = _join_names([f"{r[name_col].lower()} ({_mag(r['var_bud'])})"
+    named = _join_names([f"{_prose_name(r[name_col])} ({_mag(r['var_bud'])})"
                          for _, r in top.iterrows()])
     plural = "line accounts" if len(top) == 1 else "lines account"
     if share >= 0.99:

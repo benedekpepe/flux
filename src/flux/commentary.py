@@ -84,6 +84,33 @@ def _join_names(items: list[str]) -> str:
     return "; ".join(items)
 
 
+def _prose_name(name) -> str:
+    """Format an identifier for prose: lowercase real names, leave codes alone.
+
+    "Advertising & digital" reads better lowercased inside a sentence; the
+    same treatment on a code like "MK30200" turns it into "mk30200", which
+    looks like a bug next to the sheet where the row is labelled with
+    uppercase codes. The distinction is heuristic: a token that mixes letters
+    with digits and carries no spaces (MK30200, GA70100, 4000) is treated as
+    a code and returned as it stands. Everything else is lowercased.
+
+    This lets the client-pack analysis keep the client's own casing for
+    cost-centre codes it has no name mapping for, while the demo pack -
+    which does map codes through `CC_NAMES` - continues to read as prose.
+    """
+    s = str(name).strip()
+    if not s:
+        return s
+    if any(c.islower() for c in s):
+        return s.lower()
+    # No lowercase in the string: either an all-caps name or a code.
+    has_digit = any(c.isdigit() for c in s)
+    has_letter = any(c.isalpha() for c in s)
+    if has_digit and has_letter and " " not in s:
+        return s
+    return s.lower()
+
+
 
 # ---------------------------------------------------------------------------
 # Two-horizon commentary
@@ -447,7 +474,7 @@ def rollup_comments(
             cvar = c["actual"] - c["budget"]
             _cpct, cfu, cmaterial = verdict(cvar, c["budget"])
             if cmaterial:
-                named.append((str(child_names.get(c[child], c[child])).lower(), cfu))
+                named.append((_prose_name(child_names.get(c[child], c[child])), cfu))
         if not named:
             return ""
         names = _join_names([m for m, _ in named])

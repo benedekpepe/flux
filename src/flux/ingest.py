@@ -104,10 +104,21 @@ _FUZZY_CUTOFF = 0.82
 
 
 def _normalize(s: str) -> str:
-    s = str(s).lower().strip()
-    s = re.sub(r"[^0-9a-zA-Zaaeeiioouuoou\s]", " ", s)  # keep basic letters/digits
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    """Lowercase, strip accents, drop punctuation.
+
+    Accents are folded rather than removed: "Költséghely" has to normalise to
+    "koltseghely" so it matches the synonym set, which is stored without
+    accents. The earlier version dropped every character outside `[a-z0-9]`,
+    which turned "Költséghely" into "k lts ghely" and stopped every accented
+    Hungarian header from matching. The synonyms cover Hungarian precisely
+    because those headers appear in real files, so the normalisation has to
+    survive them.
+    """
+    import unicodedata
+    folded = unicodedata.normalize("NFKD", str(s).lower())
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    folded = re.sub(r"[^0-9a-z\s]", " ", folded)
+    return re.sub(r"\s+", " ", folded).strip()
 
 
 _SYNONYMS = {k: {_normalize(v) for v in vs} for k, vs in _RAW_SYNONYMS.items()}
